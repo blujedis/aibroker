@@ -1,0 +1,11 @@
+node_modules
+/build
+/.svelte-kit
+/data
+/drizzle/meta
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+.tmp

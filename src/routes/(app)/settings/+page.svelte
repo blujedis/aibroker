@@ -24,9 +24,21 @@
       <dl class="grid grid-cols-1 gap-3 md:grid-cols-2 text-sm">
         <div>
           <dt class="text-xs uppercase text-muted-foreground">
-            MAX_CONCURRENT_UPSTREAM
+            MAX_CONCURRENT_PER_BACKEND
           </dt>
-          <dd class="font-mono">{data.env.MAX_CONCURRENT_UPSTREAM}</dd>
+          <dd class="font-mono">{data.env.MAX_CONCURRENT_PER_BACKEND}</dd>
+        </div>
+        <div>
+          <dt class="text-xs uppercase text-muted-foreground">
+            UPSTREAM_TIMEOUT_MS
+          </dt>
+          <dd class="font-mono">{data.env.UPSTREAM_TIMEOUT_MS}</dd>
+        </div>
+        <div>
+          <dt class="text-xs uppercase text-muted-foreground">
+            UPSTREAM_STREAM_TIMEOUT_MS
+          </dt>
+          <dd class="font-mono">{data.env.UPSTREAM_STREAM_TIMEOUT_MS}</dd>
         </div>
         <div>
           <dt class="text-xs uppercase text-muted-foreground">
@@ -37,6 +49,35 @@
       </dl>
     </CardContent>
   </Card>
+
+  {#if Object.keys(data.queueStats).length > 0}
+    <Card>
+      <CardHeader
+        title="Queue Status"
+        description="Active and pending upstream requests per backend (snapshot at page load)"
+      />
+      <CardContent>
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="text-xs uppercase text-muted-foreground text-left">
+              <th class="pb-2 pr-4">Backend ID</th>
+              <th class="pb-2 pr-4">Active</th>
+              <th class="pb-2">Pending</th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each Object.entries(data.queueStats) as [id, stats]}
+              <tr class="border-t">
+                <td class="py-1.5 pr-4 font-mono text-xs">{id}</td>
+                <td class="py-1.5 pr-4">{stats.concurrency}</td>
+                <td class="py-1.5">{stats.pending}</td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </CardContent>
+    </Card>
+  {/if}
 
   <Card>
     <CardHeader title="Maintenance" />

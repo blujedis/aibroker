@@ -1,6 +1,10 @@
 import type { RequestHandler } from './$types';
 import { json } from '@sveltejs/kit';
-import { upstreamLimit } from '$lib/server/proxy/concurrency.js';
+import {
+  getLimiterForBackend,
+  UPSTREAM_TIMEOUT_MS,
+  UPSTREAM_STREAM_TIMEOUT_MS
+} from '$lib/server/proxy/concurrency.js';
 import { callUpstreamChat } from '$lib/server/proxy/backend.js';
 import {
   checkBudgets,
@@ -74,7 +78,10 @@ export const POST: RequestHandler = async ({ request }) => {
   const pre = runPreStage({ messages, model: publicModel });
 
   if (pre.outcome.action === 'block') {
-    const reqId = logRequest(
+    const preLogs = pre.logs;
+    const preProfile = profile;
+    const preVirtualKey = virtualKey;
+    logRequest(
       { profile, virtualKey, model },
       {
         endpoint: '/v1/chat/completions',
@@ -86,13 +93,13 @@ export const POST: RequestHandler = async ({ request }) => {
         outputTokens: 0,
         cost: 0,
         latencyMs: Math.round(performance.now() - started)
-      }
+      },
+      (id) => persistGuardrailLogs(preLogs, {
+        profileId: preProfile.id,
+        virtualKeyId: preVirtualKey.id,
+        requestId: id
+      })
     );
-    persistGuardrailLogs(pre.logs, {
-      profileId: profile.id,
-      virtualKeyId: virtualKey.id,
-      requestId: reqId
-    });
     return json(errBody('guardrail_block', pre.outcome.reason ?? 'Request blocked'), {
       status: 403
     });
@@ -115,14 +122,37 @@ export const POST: RequestHandler = async ({ request }) => {
   }
 
   // Non-streaming path
-  const upstreamRes = await upstreamLimit(() =>
-    callUpstreamChat({
-      backend,
-      upstreamModel: model.upstreamId,
-      body: outgoingBody,
-      stream: false
-    })
-  );
+  let upstreamRes: Response;
+  try {
+    upstreamRes = await getLimiterForBackend(backend.id)(() =>
+      callUpstreamChat({
+        backend,
+        upstreamModel: model.upstreamId,
+        body: outgoingBody,
+        stream: false,
+        signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS)
+      })
+    );
+  } catch (err) {
+    const isTimeout =
+      (err instanceof DOMException && err.name === 'TimeoutError') ||
+      (err instanceof Error && err.name === 'AbortError');
+    logRequest(
+      { profile, virtualKey, model },
+      {
+        endpoint: '/v1/chat/completions',
+        streaming: false,
+        status: 'failed',
+        httpStatus: 504,
+        errorMessage: isTimeout ? 'Upstream timeout' : String(err),
+        inputTokens: 0,
+        outputTokens: 0,
+        cost: 0,
+        latencyMs: Math.round(performance.now() - started)
+      }
+    );
+    return json(errBody('upstream_timeout', 'Upstream request timed out'), { status: 504 });
+  }
 
   let upstreamJson: Record<string, unknown> | null = null;
   try {
@@ -132,7 +162,10 @@ export const POST: RequestHandler = async ({ request }) => {
   }
 
   if (!upstreamRes.ok) {
-    const reqId = logRequest(
+    const failLogs = pre.logs;
+    const failProfile = profile;
+    const failVirtualKey = virtualKey;
+    logRequest(
       { profile, virtualKey, model },
       {
         endpoint: '/v1/chat/completions',
@@ -144,13 +177,13 @@ export const POST: RequestHandler = async ({ request }) => {
         outputTokens: 0,
         cost: 0,
         latencyMs: Math.round(performance.now() - started)
-      }
+      },
+      (id) => persistGuardrailLogs(failLogs, {
+        profileId: failProfile.id,
+        virtualKeyId: failVirtualKey.id,
+        requestId: id
+      })
     );
-    persistGuardrailLogs(pre.logs, {
-      profileId: profile.id,
-      virtualKeyId: virtualKey.id,
-      requestId: reqId
-    });
     return new Response(JSON.stringify(upstreamJson ?? { error: 'upstream error' }), {
       status: upstreamRes.status,
       headers: { 'content-type': 'application/json' }
@@ -193,7 +226,10 @@ export const POST: RequestHandler = async ({ request }) => {
   const cost = breakdown.total;
   const latencyMs = Math.round(performance.now() - started);
 
-  const reqId = logRequest(
+  const allLogs = [...pre.logs, ...post.logs];
+  const successProfile = profile;
+  const successVirtualKey = virtualKey;
+  logRequest(
     { profile, virtualKey, model },
     {
       endpoint: '/v1/chat/completions',
@@ -213,13 +249,13 @@ export const POST: RequestHandler = async ({ request }) => {
       imageInputCost: breakdown.imageInputCost,
       cost,
       latencyMs
-    }
+    },
+    (id) => persistGuardrailLogs(allLogs, {
+      profileId: successProfile.id,
+      virtualKeyId: successVirtualKey.id,
+      requestId: id
+    })
   );
-  persistGuardrailLogs([...pre.logs, ...post.logs], {
-    profileId: profile.id,
-    virtualKeyId: virtualKey.id,
-    requestId: reqId
-  });
 
   // Replace model in response with the public id so clients see what they asked for.
   if (upstreamJson) upstreamJson.model = model.publicId;
@@ -237,18 +273,47 @@ async function handleStreaming(opts: {
 }): Promise<Response> {
   const { started, outgoingBody, backend, profile, virtualKey, model, preLogs } = opts;
 
-  const upstreamRes = await upstreamLimit(() =>
-    callUpstreamChat({
-      backend,
-      upstreamModel: model.upstreamId,
-      body: outgoingBody,
-      stream: true
-    })
-  );
+  let upstreamRes: Response;
+  try {
+    upstreamRes = await getLimiterForBackend(backend.id)(() =>
+      callUpstreamChat({
+        backend,
+        upstreamModel: model.upstreamId,
+        body: outgoingBody,
+        stream: true,
+        signal: AbortSignal.timeout(UPSTREAM_STREAM_TIMEOUT_MS)
+      })
+    );
+  } catch (err) {
+    const isTimeout =
+      (err instanceof DOMException && err.name === 'TimeoutError') ||
+      (err instanceof Error && err.name === 'AbortError');
+    logRequest(
+      { profile: profile as never, virtualKey: virtualKey as never, model: model as never },
+      {
+        endpoint: '/v1/chat/completions',
+        streaming: true,
+        status: 'failed',
+        httpStatus: 504,
+        errorMessage: isTimeout ? 'Upstream timeout' : String(err),
+        inputTokens: 0,
+        outputTokens: 0,
+        cost: 0,
+        latencyMs: Math.round(performance.now() - started)
+      }
+    );
+    return new Response(
+      JSON.stringify(errBody('upstream_timeout', 'Upstream request timed out')),
+      { status: 504, headers: { 'content-type': 'application/json' } }
+    );
+  }
 
   if (!upstreamRes.ok || !upstreamRes.body) {
     const errText = await upstreamRes.text().catch(() => 'upstream error');
-    const reqId = logRequest(
+    const streamFailLogs = preLogs;
+    const streamFailProfile = profile;
+    const streamFailVirtualKey = virtualKey;
+    logRequest(
       {
         profile: profile as never,
         virtualKey: virtualKey as never,
@@ -264,13 +329,13 @@ async function handleStreaming(opts: {
         outputTokens: 0,
         cost: 0,
         latencyMs: Math.round(performance.now() - started)
-      }
+      },
+      (id) => persistGuardrailLogs(streamFailLogs, {
+        profileId: streamFailProfile.id,
+        virtualKeyId: streamFailVirtualKey.id,
+        requestId: id
+      })
     );
-    persistGuardrailLogs(preLogs, {
-      profileId: profile.id,
-      virtualKeyId: virtualKey.id,
-      requestId: reqId
-    });
     return new Response(errText, { status: upstreamRes.status });
   }
 
@@ -393,7 +458,10 @@ async function handleStreaming(opts: {
     const breakdown = computeCostBreakdown(model, { inputTokens, outputTokens });
     const cost = breakdown.total;
     const latencyMs = Math.round(performance.now() - started);
-    const reqId = logRequest(
+    const streamAllLogs = [...preLogs, ...duringLogs, ...post.logs];
+    const streamProfile = profile;
+    const streamVirtualKey = virtualKey;
+    logRequest(
       {
         profile: profile as never,
         virtualKey: virtualKey as never,
@@ -411,13 +479,13 @@ async function handleStreaming(opts: {
         outputCost: breakdown.outputCost,
         cost,
         latencyMs
-      }
+      },
+      (id) => persistGuardrailLogs(streamAllLogs, {
+        profileId: streamProfile.id,
+        virtualKeyId: streamVirtualKey.id,
+        requestId: id
+      })
     );
-    persistGuardrailLogs([...preLogs, ...duringLogs, ...post.logs], {
-      profileId: profile.id,
-      virtualKeyId: virtualKey.id,
-      requestId: reqId
-    });
   };
 
   // Kick off finalize once the upstream readable is drained. We schedule it via

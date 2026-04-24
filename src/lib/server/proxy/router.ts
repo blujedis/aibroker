@@ -3,6 +3,8 @@ import { nanoid } from 'nanoid';
 import { db, schema } from '../db/index.js';
 import { windowStart } from './budget.js';
 import type { Backend, Model, Profile, VirtualKey } from '../db/schema.js';
+import { getCachedAuth, setCachedAuth } from './auth-cache.js';
+import { addSpend, getBudgetSpend } from './budget-cache.js';
 
 export interface ResolvedKey {
   profile: Profile;
@@ -28,6 +30,10 @@ export function resolveKey(
   publicModel: string
 ): ResolvedKey | AuthFailure {
   if (!token) return { code: 'missing_key', message: 'Missing API key' };
+
+  // Fast path: return cached resolution
+  const cached = getCachedAuth(token, publicModel);
+  if (cached) return cached;
 
   const vkRow = db
     .select()
@@ -75,7 +81,9 @@ export function resolveKey(
     return { code: 'model_not_found', message: 'Backend for model unavailable' };
   }
 
-  return { profile, virtualKey: vkRow, model, backend };
+  const resolved: ResolvedKey = { profile, virtualKey: vkRow, model, backend };
+  setCachedAuth(token, publicModel, resolved);
+  return resolved;
 }
 
 export interface BudgetCheckResult {
@@ -85,7 +93,10 @@ export interface BudgetCheckResult {
   profileSpent?: number;
 }
 
-export function checkBudgets(profile: Profile, virtualKey: VirtualKey): BudgetCheckResult {
+export function checkBudgets(
+  profile: Profile,
+  virtualKey: VirtualKey
+): BudgetCheckResult {
   // Virtual key budget
   if (virtualKey.budget && virtualKey.budget > 0) {
     const start = windowStart(virtualKey.budgetFrequency ?? undefined);
@@ -119,21 +130,23 @@ export function checkBudgets(profile: Profile, virtualKey: VirtualKey): BudgetCh
 }
 
 function spendSince(kind: 'vkey' | 'profile', id: string, sinceMs: number): number {
-  const since = new Date(sinceMs);
-  const row = db
-    .select({ total: sum(schema.requestLogs.cost).as('total') })
-    .from(schema.requestLogs)
-    .where(
-      and(
-        kind === 'vkey'
-          ? eq(schema.requestLogs.virtualKeyId, id)
-          : eq(schema.requestLogs.profileId, id),
-        gte(schema.requestLogs.createdAt, since)
+  return getBudgetSpend(kind, id, sinceMs, () => {
+    const since = new Date(sinceMs);
+    const row = db
+      .select({ total: sum(schema.requestLogs.cost).as('total') })
+      .from(schema.requestLogs)
+      .where(
+        and(
+          kind === 'vkey'
+            ? eq(schema.requestLogs.virtualKeyId, id)
+            : eq(schema.requestLogs.profileId, id),
+          gte(schema.requestLogs.createdAt, since)
+        )
       )
-    )
-    .get();
-  const v = row?.total;
-  return typeof v === 'number' ? v : typeof v === 'string' ? Number(v) || 0 : 0;
+      .get();
+    const v = row?.total;
+    return typeof v === 'number' ? v : typeof v === 'string' ? Number(v) || 0 : 0;
+  });
 }
 
 export interface CompletedRequestLog {
@@ -171,50 +184,102 @@ export function logRequest(
     virtualKey?: VirtualKey | null;
     model?: Model | null;
   },
-  entry: Omit<CompletedRequestLog, 'id'>
+  entry: Omit<CompletedRequestLog, 'id'>,
+  andThen?: (id: string) => void
 ): string {
   const id = nanoid();
-  db.insert(schema.requestLogs)
-    .values({
-      id,
-      profileId: ctx.profile?.id ?? null,
-      profileName: ctx.profile?.name ?? null,
-      virtualKeyId: ctx.virtualKey?.id ?? null,
-      virtualKeyName: ctx.virtualKey?.name ?? null,
-      modelId: ctx.model?.id ?? null,
-      modelPublicId: ctx.model?.publicId ?? null,
-      endpoint: entry.endpoint,
-      streaming: entry.streaming,
-      status: entry.status,
-      httpStatus: entry.httpStatus,
-      errorMessage: entry.errorMessage ?? null,
-      inputTokens: entry.inputTokens,
-      outputTokens: entry.outputTokens,
-      cachedInputTokens: entry.cachedInputTokens ?? 0,
-      imageInputTokens: entry.imageInputTokens ?? 0,
-      audioInputTokens: entry.audioInputTokens ?? 0,
-      videoInputTokens: entry.videoInputTokens ?? 0,
-      imageOutputTokens: entry.imageOutputTokens ?? 0,
-      videoOutputTokens: entry.videoOutputTokens ?? 0,
-      webSearchCalls: entry.webSearchCalls ?? 0,
-      inputCost: entry.inputCost ?? 0,
-      outputCost: entry.outputCost ?? 0,
-      cachedInputCost: entry.cachedInputCost ?? 0,
-      imageInputCost: entry.imageInputCost ?? 0,
-      audioInputCost: entry.audioInputCost ?? 0,
-      videoInputCost: entry.videoInputCost ?? 0,
-      imageOutputCost: entry.imageOutputCost ?? 0,
-      videoOutputCost: entry.videoOutputCost ?? 0,
-      webSearchCost: entry.webSearchCost ?? 0,
-      cost: entry.cost,
-      latencyMs: entry.latencyMs
-    })
-    .run();
-  if (ctx.virtualKey) {
-    db.update(schema.virtualKeys)
-      .set({ lastUsedAt: new Date() })
-      .where(eq(schema.virtualKeys.id, ctx.virtualKey.id))
-      .run();
+
+  // Accumulate spend into budget cache so subsequent requests in the same
+  // TTL window see an up-to-date figure without hitting the DB.
+  if (entry.cost > 0) {
+    const vkStart = ctx.virtualKey
+      ? windowStart(ctx.virtualKey.budgetFrequency ?? undefined)
+      : null;
+    const profileStart = ctx.profile
+      ? windowStart((ctx.profile as Profile & { globalBudgetFrequency?: string | null }).globalBudgetFrequency ?? undefined)
+      : null;
+    if (vkStart != null && ctx.virtualKey) {
+      addSpend('vkey', ctx.virtualKey.id, vkStart, entry.cost);
+    }
+    if (profileStart != null && ctx.profile) {
+      addSpend('profile', ctx.profile.id, profileStart, entry.cost);
+    }
   }
+
+  // Deferred write: enqueue and drain off the critical path.
+  enqueueWrite(() => {
+    db.insert(schema.requestLogs)
+      .values({
+        id,
+        profileId: ctx.profile?.id ?? null,
+        profileName: ctx.profile?.name ?? null,
+        virtualKeyId: ctx.virtualKey?.id ?? null,
+        virtualKeyName: ctx.virtualKey?.name ?? null,
+        modelId: ctx.model?.id ?? null,
+        modelPublicId: ctx.model?.publicId ?? null,
+        endpoint: entry.endpoint,
+        streaming: entry.streaming,
+        status: entry.status,
+        httpStatus: entry.httpStatus,
+        errorMessage: entry.errorMessage ?? null,
+        inputTokens: entry.inputTokens,
+        outputTokens: entry.outputTokens,
+        cachedInputTokens: entry.cachedInputTokens ?? 0,
+        imageInputTokens: entry.imageInputTokens ?? 0,
+        audioInputTokens: entry.audioInputTokens ?? 0,
+        videoInputTokens: entry.videoInputTokens ?? 0,
+        imageOutputTokens: entry.imageOutputTokens ?? 0,
+        videoOutputTokens: entry.videoOutputTokens ?? 0,
+        webSearchCalls: entry.webSearchCalls ?? 0,
+        inputCost: entry.inputCost ?? 0,
+        outputCost: entry.outputCost ?? 0,
+        cachedInputCost: entry.cachedInputCost ?? 0,
+        imageInputCost: entry.imageInputCost ?? 0,
+        audioInputCost: entry.audioInputCost ?? 0,
+        videoInputCost: entry.videoInputCost ?? 0,
+        imageOutputCost: entry.imageOutputCost ?? 0,
+        videoOutputCost: entry.videoOutputCost ?? 0,
+        webSearchCost: entry.webSearchCost ?? 0,
+        cost: entry.cost,
+        latencyMs: entry.latencyMs
+      })
+      .run();
+    if (ctx.virtualKey) {
+      db.update(schema.virtualKeys)
+        .set({ lastUsedAt: new Date() })
+        .where(eq(schema.virtualKeys.id, ctx.virtualKey.id))
+        .run();
+    }
+    andThen?.(id);
+  });
+
   return id;
+}
+
+// ---------------------------------------------------------------------------
+// Deferred write queue — drains on the next microtask tick, off the hot path
+// ---------------------------------------------------------------------------
+type WriteTask = () => void;
+const writeQueue: WriteTask[] = [];
+let drainScheduled = false;
+
+function enqueueWrite(task: WriteTask): void {
+  writeQueue.push(task);
+  if (!drainScheduled) {
+    drainScheduled = true;
+    queueMicrotask(drainWrites);
+  }
+}
+
+function drainWrites(): void {
+  drainScheduled = false;
+  // Drain all tasks queued up to this point (tasks added during drain run next tick).
+  const batch = writeQueue.splice(0);
+  for (const task of batch) {
+    try {
+      task();
+    } catch (err) {
+      console.error('[router] deferred write error', err);
+    }
+  }
 }

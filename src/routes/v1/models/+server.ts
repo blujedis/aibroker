@@ -33,7 +33,7 @@ export const GET: RequestHandler = async ({ request }) => {
       id: m.publicId,
       object: 'model',
       created: Math.floor(m.createdAt.getTime() / 1000),
-      owned_by: 'nostraproxy'
+      owned_by: 'aibroker'
     }))
   });
 };

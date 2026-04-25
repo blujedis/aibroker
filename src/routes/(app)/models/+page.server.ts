@@ -2,7 +2,7 @@ import { fail, type Actions } from '@sveltejs/kit';
 import { asc, eq } from 'drizzle-orm';
 import { nanoid } from 'nanoid';
 import { db, schema } from '$lib/server/db/index.js';
-import { ingestCatalog, type RawCatalog } from '$lib/server/catalog.js';
+import { encryptSecret, isEncryptedSecret } from '$lib/server/secrets.js';
 import type { PageServerLoad } from './$types';
 
 const BOOL_FIELDS = [
@@ -87,8 +87,26 @@ function safeJsonArray(v: string): string[] {
   }
 }
 
-export const load: PageServerLoad = () => {
+function sanitizeBackendsForClient() {
   const backends = db.select().from(schema.backends).orderBy(asc(schema.backends.name)).all();
+
+  for (const backend of backends) {
+    if (backend.apiKey && !isEncryptedSecret(backend.apiKey)) {
+      db.update(schema.backends)
+        .set({
+          apiKey: encryptSecret(backend.apiKey),
+          updatedAt: new Date()
+        })
+        .where(eq(schema.backends.id, backend.id))
+        .run();
+    }
+  }
+
+  return backends.map(({ apiKey: _apiKey, ...backend }) => backend);
+}
+
+export const load: PageServerLoad = () => {
+  const backends = sanitizeBackendsForClient();
 
   const models = db
     .select()
@@ -98,8 +116,15 @@ export const load: PageServerLoad = () => {
     .all()
     .map((row) => ({
       ...row.models,
-      backendName: row.backends?.name ?? null
+      backendName: row.backends?.name ?? null,
+      backendProfileId: row.backends?.profileId ?? null
     }));
+
+  const profiles = db
+    .select()
+    .from(schema.profiles)
+    .orderBy(asc(schema.profiles.name))
+    .all();
 
   const accessibleProviders = db
     .select()
@@ -120,7 +145,7 @@ export const load: PageServerLoad = () => {
       providersParsed: safeJsonArray(m.providers)
     }));
 
-  return { backends, models, accessibleProviders, accessibleModels };
+  return { backends, models, profiles, accessibleProviders, accessibleModels };
 };
 
 export const actions: Actions = {
@@ -130,14 +155,24 @@ export const actions: Actions = {
     const baseUrl = str(form.get('baseUrl'));
     const apiKey = str(form.get('apiKey'));
     const kind = str(form.get('kind')) || 'openai';
+    const profileId = str(form.get('profileId')) || null;
+
     if (!name || !baseUrl || !apiKey) return fail(400, { error: 'name, baseUrl, apiKey required' });
+
+    // Validate profile exists if provided
+    if (profileId) {
+      const profile = db.query.profiles.findFirst({ where: eq(schema.profiles.id, profileId) });
+      if (!profile) return fail(400, { error: 'Profile not found' });
+    }
+
     db.insert(schema.backends)
       .values({
         id: nanoid(),
         name,
         kind: kind as 'openai' | 'anthropic' | 'custom',
         baseUrl,
-        apiKey,
+        apiKey: encryptSecret(apiKey),
+        profileId,
         enabled: true
       })
       .run();
@@ -147,17 +182,34 @@ export const actions: Actions = {
     const form = await request.formData();
     const id = str(form.get('id'));
     if (!id) return fail(400, { error: 'Missing id' });
-    db.update(schema.backends)
-      .set({
-        name: str(form.get('name')),
-        baseUrl: str(form.get('baseUrl')),
-        apiKey: str(form.get('apiKey')),
-        kind: (str(form.get('kind')) || 'openai') as 'openai' | 'anthropic' | 'custom',
-        enabled: form.get('enabled') === 'on',
-        updatedAt: new Date()
-      })
-      .where(eq(schema.backends.id, id))
-      .run();
+    const nextApiKey = str(form.get('apiKey'));
+    const profileId = str(form.get('profileId')) || null;
+
+    // Validate profile exists if provided
+    if (profileId) {
+      const profile = db.query.profiles.findFirst({ where: eq(schema.profiles.id, profileId) });
+      if (!profile) return fail(400, { error: 'Profile not found' });
+    }
+
+    const backendPatch: {
+      name: string;
+      baseUrl: string;
+      kind: 'openai' | 'anthropic' | 'custom';
+      enabled: boolean;
+      profileId: string | null;
+      updatedAt: Date;
+      apiKey?: string;
+    } = {
+      name: str(form.get('name')),
+      baseUrl: str(form.get('baseUrl')),
+      kind: (str(form.get('kind')) || 'openai') as 'openai' | 'anthropic' | 'custom',
+      profileId,
+      enabled: form.get('enabled') === 'on',
+      updatedAt: new Date()
+    };
+    if (nextApiKey) backendPatch.apiKey = encryptSecret(nextApiKey);
+
+    db.update(schema.backends).set(backendPatch).where(eq(schema.backends.id, id)).run();
     return { ok: true };
   },
   backendDelete: async ({ request }) => {
@@ -214,19 +266,5 @@ export const actions: Actions = {
     const id = str(form.get('id'));
     db.delete(schema.models).where(eq(schema.models.id, id)).run();
     return { ok: true };
-  },
-  catalogUpload: async ({ request }) => {
-    const form = await request.formData();
-    const file = form.get('file');
-    if (!(file instanceof File)) return fail(400, { error: 'Missing file' });
-    let parsed: RawCatalog;
-    try {
-      const text = await file.text();
-      parsed = JSON.parse(text) as RawCatalog;
-    } catch (err) {
-      return fail(400, { error: `Invalid JSON: ${(err as Error).message}` });
-    }
-    const result = ingestCatalog(parsed);
-    return { ok: true, catalog: result };
   }
 };

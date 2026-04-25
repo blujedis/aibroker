@@ -12,7 +12,7 @@
   let { data, form } = $props();
 </script>
 
-<svelte:head><title>Profile · Nostraproxy</title></svelte:head>
+<svelte:head><title>Profile · AiBroker</title></svelte:head>
 
 <div class="flex flex-col gap-6">
   <div>

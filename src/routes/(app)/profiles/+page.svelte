@@ -10,6 +10,7 @@
     Table,
     Textarea,
     Badge,
+    ConfirmDialog,
   } from "$lib/components/ui";
   import { enhance } from "$app/forms";
   import { fmtCurrency, fmtDateTime } from "$lib/utils";
@@ -17,9 +18,50 @@
 
   let { data } = $props();
   let editingId: string | null = $state(null);
+  let createFreq = $state("");
+  let editFreq = $state("");
+
+  function startEditing(p: (typeof data.profiles)[number]) {
+    editingId = p.id;
+    editFreq = p.globalBudgetFrequency ?? "";
+  }
+  let confirmOpen = $state(false);
+  let deleteId: string | null = $state(null);
+  let deleteName = $state("");
+  let deleteFormEl: HTMLFormElement | null = null;
+
+  function askDelete(id: string, name: string) {
+    deleteId = id;
+    deleteName = name;
+    confirmOpen = true;
+  }
+
+  function submitDelete() {
+    if (!deleteId) return;
+    deleteFormEl?.requestSubmit();
+    confirmOpen = false;
+  }
 </script>
 
-<svelte:head><title>Profiles · Nostraproxy</title></svelte:head>
+<svelte:head><title>Profiles · AiBroker</title></svelte:head>
+
+<ConfirmDialog
+  bind:open={confirmOpen}
+  title="Delete profile?"
+  description={`This will permanently delete ${deleteName}.`}
+  confirmLabel="Delete"
+  on:confirm={submitDelete}
+/>
+
+<form
+  method="POST"
+  action="?/delete"
+  use:enhance
+  class="hidden"
+  bind:this={deleteFormEl}
+>
+  <input type="hidden" name="id" value={deleteId ?? ""} />
+</form>
 
 <div class="flex flex-col gap-6">
   <div>
@@ -59,12 +101,17 @@
         </div>
         <div class="flex flex-col gap-1.5">
           <Label for="globalBudgetFrequency">Frequency</Label>
-          <Select id="globalBudgetFrequency" name="globalBudgetFrequency">
-            <option value="">unlimited</option>
-            <option value="daily">daily</option>
-            <option value="weekly">weekly</option>
-            <option value="monthly">monthly</option>
-          </Select>
+          <Select.Root bind:value={createFreq} name="globalBudgetFrequency">
+            <Select.Trigger id="globalBudgetFrequency"
+              >{createFreq || "unlimited"}</Select.Trigger
+            >
+            <Select.Content>
+              <Select.Item value="" label="unlimited" />
+              <Select.Item value="daily" />
+              <Select.Item value="weekly" />
+              <Select.Item value="monthly" />
+            </Select.Content>
+          </Select.Root>
         </div>
         <div class="md:col-span-4">
           <Button type="submit">Create profile</Button>
@@ -128,15 +175,20 @@
                     </div>
                     <div class="flex flex-col gap-1.5">
                       <Label>Frequency</Label>
-                      <Select
+                      <Select.Root
+                        bind:value={editFreq}
                         name="globalBudgetFrequency"
-                        value={p.globalBudgetFrequency ?? ""}
                       >
-                        <option value="">unlimited</option>
-                        <option value="daily">daily</option>
-                        <option value="weekly">weekly</option>
-                        <option value="monthly">monthly</option>
-                      </Select>
+                        <Select.Trigger
+                          >{editFreq || "unlimited"}</Select.Trigger
+                        >
+                        <Select.Content>
+                          <Select.Item value="" label="unlimited" />
+                          <Select.Item value="daily" />
+                          <Select.Item value="weekly" />
+                          <Select.Item value="monthly" />
+                        </Select.Content>
+                      </Select.Root>
                     </div>
                     <div class="flex items-center gap-2">
                       <label class="flex items-center gap-2 text-sm">
@@ -187,21 +239,18 @@
                   <Button
                     variant="ghost"
                     size="sm"
-                    onclick={() => (editingId = p.id)}
+                    onclick={() => startEditing(p)}
                   >
                     <Pencil class="h-4 w-4" />
                   </Button>
-                  <form
-                    method="POST"
-                    action="?/delete"
-                    use:enhance
-                    class="inline"
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    type="button"
+                    onclick={() => askDelete(p.id, p.name)}
                   >
-                    <input type="hidden" name="id" value={p.id} />
-                    <Button variant="ghost" size="sm" type="submit">
-                      <Trash2 class="h-4 w-4 text-destructive" />
-                    </Button>
-                  </form>
+                    <Trash2 class="h-4 w-4 text-destructive" />
+                  </Button>
                 </td>
               </tr>
             {/if}

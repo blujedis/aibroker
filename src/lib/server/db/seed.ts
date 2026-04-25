@@ -24,7 +24,7 @@ export async function bootstrapAdminIfNeeded(): Promise<void> {
     .run();
 
   // eslint-disable-next-line no-console
-  console.log(`[nostraproxy] seeded bootstrap admin '${email}'`);
+  console.log(`[aibroker] seeded bootstrap admin '${email}'`);
 }
 
 // Allow `pnpm db:seed` to call this directly.

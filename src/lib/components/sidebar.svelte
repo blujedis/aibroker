@@ -53,7 +53,7 @@
     </div>
     {#if !collapsed}
       <div class="flex flex-col leading-tight">
-        <span class="text-sm font-semibold">Nostraproxy</span>
+        <span class="text-sm font-semibold">AiBroker</span>
         <span class="text-[11px] text-muted-foreground">LLM Gateway</span>
       </div>
     {/if}

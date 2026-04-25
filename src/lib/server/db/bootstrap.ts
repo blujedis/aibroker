@@ -1,4 +1,5 @@
 import { sqlite } from './index.js';
+import { encryptSecret, isEncryptedSecret } from '../secrets.js';
 
 const DDL = `
 CREATE TABLE IF NOT EXISTS users (
@@ -6,7 +7,7 @@ CREATE TABLE IF NOT EXISTS users (
   email TEXT NOT NULL UNIQUE,
   name TEXT NOT NULL,
   password_hash TEXT NOT NULL,
-  role TEXT NOT NULL DEFAULT 'admin',
+  role TEXT NOT NULL DEFAULT 'operator',
   created_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
   updated_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
 );
@@ -19,16 +20,29 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 CREATE INDEX IF NOT EXISTS sessions_user_idx ON sessions(user_id);
 
+CREATE TABLE IF NOT EXISTS profiles (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT,
+  global_budget REAL,
+  global_budget_frequency TEXT,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  created_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
+  updated_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
+);
+
 CREATE TABLE IF NOT EXISTS backends (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
   kind TEXT NOT NULL DEFAULT 'openai',
   base_url TEXT NOT NULL,
   api_key TEXT NOT NULL,
+  profile_id TEXT REFERENCES profiles(id) ON DELETE SET NULL,
   enabled INTEGER NOT NULL DEFAULT 1,
   created_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
   updated_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
 );
+CREATE INDEX IF NOT EXISTS backends_profile_idx ON backends(profile_id);
 
 CREATE TABLE IF NOT EXISTS models (
   id TEXT PRIMARY KEY,
@@ -108,17 +122,6 @@ CREATE TABLE IF NOT EXISTS accessible_models (
 );
 CREATE INDEX IF NOT EXISTS accessible_models_slug_idx ON accessible_models(slug);
 
-CREATE TABLE IF NOT EXISTS profiles (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL,
-  description TEXT,
-  global_budget REAL,
-  global_budget_frequency TEXT,
-  enabled INTEGER NOT NULL DEFAULT 1,
-  created_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
-  updated_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
-);
-
 CREATE TABLE IF NOT EXISTS virtual_keys (
   id TEXT PRIMARY KEY,
   profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
@@ -188,11 +191,13 @@ CREATE TABLE IF NOT EXISTS guardrails (
   stage TEXT NOT NULL,
   kind TEXT NOT NULL,
   config TEXT NOT NULL DEFAULT '{}',
+  profile_id TEXT REFERENCES profiles(id) ON DELETE SET NULL,
   enabled INTEGER NOT NULL DEFAULT 1,
   priority INTEGER NOT NULL DEFAULT 100,
   created_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
   updated_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
 );
+CREATE INDEX IF NOT EXISTS guardrails_profile_idx ON guardrails(profile_id);
 
 CREATE TABLE IF NOT EXISTS guardrail_logs (
   id TEXT PRIMARY KEY,
@@ -219,25 +224,32 @@ CREATE TABLE IF NOT EXISTS mcp_servers (
   args TEXT,
   env TEXT,
   url TEXT,
+  profile_id TEXT REFERENCES profiles(id) ON DELETE SET NULL,
   enabled INTEGER NOT NULL DEFAULT 1,
   created_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
   updated_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
 );
+CREATE INDEX IF NOT EXISTS mcp_servers_profile_idx ON mcp_servers(profile_id);
 
 CREATE TABLE IF NOT EXISTS skills (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
   description TEXT,
   instructions TEXT NOT NULL,
+  profile_id TEXT REFERENCES profiles(id) ON DELETE SET NULL,
   enabled INTEGER NOT NULL DEFAULT 1,
   created_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
   updated_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
 );
+CREATE INDEX IF NOT EXISTS skills_profile_idx ON skills(profile_id);
 `;
 
 // Columns added after initial release. SQLite lacks `ADD COLUMN IF NOT EXISTS`,
 // so we introspect PRAGMA and add missing ones.
 const COLUMN_MIGRATIONS: Record<string, Record<string, string>> = {
+  backends: {
+    profile_id: 'TEXT REFERENCES profiles(id) ON DELETE SET NULL'
+  },
   models: {
     cached_input_price_per_m_tokens: 'REAL NOT NULL DEFAULT 0',
     image_input_price_per_m_tokens: 'REAL NOT NULL DEFAULT 0',
@@ -259,6 +271,15 @@ const COLUMN_MIGRATIONS: Record<string, Record<string, string>> = {
     has_zdr_provider: 'INTEGER NOT NULL DEFAULT 0',
     has_no_prompt_training_provider: 'INTEGER NOT NULL DEFAULT 0',
     has_hipaa_compliant_provider: 'INTEGER NOT NULL DEFAULT 0'
+  },
+  guardrails: {
+    profile_id: 'TEXT REFERENCES profiles(id) ON DELETE SET NULL'
+  },
+  mcp_servers: {
+    profile_id: 'TEXT REFERENCES profiles(id) ON DELETE SET NULL'
+  },
+  skills: {
+    profile_id: 'TEXT REFERENCES profiles(id) ON DELETE SET NULL'
   },
   request_logs: {
     cached_input_tokens: 'INTEGER NOT NULL DEFAULT 0',
@@ -295,11 +316,27 @@ function migrateColumns(): void {
   }
 }
 
+function migrateBackendSecrets(): void {
+  const rows = sqlite
+    .prepare('SELECT id, api_key FROM backends')
+    .all() as Array<{ id: string; api_key: string }>;
+
+  const updateBackendSecret = sqlite.prepare(
+    'UPDATE backends SET api_key = ?, updated_at = (unixepoch() * 1000) WHERE id = ?'
+  );
+
+  for (const row of rows) {
+    if (!row.api_key || isEncryptedSecret(row.api_key)) continue;
+    updateBackendSecret.run(encryptSecret(row.api_key), row.id);
+  }
+}
+
 let ran = false;
 
 export function ensureSchema(): void {
   if (ran) return;
   sqlite.exec(DDL);
   migrateColumns();
+  migrateBackendSecrets();
   ran = true;
 }

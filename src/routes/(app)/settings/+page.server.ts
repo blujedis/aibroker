@@ -1,5 +1,7 @@
+import { fail } from '@sveltejs/kit';
 import { reapExpiredSessions } from '$lib/server/auth/session.js';
 import { getQueueStats } from '$lib/server/proxy/concurrency.js';
+import { ingestCatalog, type RawCatalog } from '$lib/server/catalog.js';
 import type { Actions, PageServerLoad } from './$types';
 
 export const load: PageServerLoad = () => {
@@ -18,5 +20,19 @@ export const actions: Actions = {
   reapSessions: () => {
     const n = reapExpiredSessions();
     return { ok: true, reaped: n };
+  },
+  catalogUpload: async ({ request }) => {
+    const form = await request.formData();
+    const file = form.get('file');
+    if (!(file instanceof File)) return fail(400, { error: 'Missing file' });
+    let parsed: RawCatalog;
+    try {
+      const text = await file.text();
+      parsed = JSON.parse(text) as RawCatalog;
+    } catch (err) {
+      return fail(400, { error: `Invalid JSON: ${(err as Error).message}` });
+    }
+    const result = ingestCatalog(parsed);
+    return { ok: true, catalog: result };
   }
 };

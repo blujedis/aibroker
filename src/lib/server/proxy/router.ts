@@ -2,9 +2,12 @@ import { and, eq, gte, sum } from 'drizzle-orm';
 import { nanoid } from 'nanoid';
 import { db, schema } from '../db/index.js';
 import { windowStart } from './budget.js';
+import { isResourceAccessibleToProfile } from '../scope.js';
 import type { Backend, Model, Profile, VirtualKey } from '../db/schema.js';
 import { getCachedAuth, setCachedAuth } from './auth-cache.js';
 import { addSpend, getBudgetSpend } from './budget-cache.js';
+import { decryptSecret, encryptSecret, isEncryptedSecret } from '../secrets.js';
+import { logScopeEvent } from '../observability/scope.js';
 
 export interface ResolvedKey {
   profile: Profile;
@@ -66,6 +69,12 @@ export function resolveKey(
     .where(eq(schema.virtualKeyModels.virtualKeyId, vkRow.id))
     .all();
   if (allowed.length > 0 && !allowed.some((a) => a.modelId === model.id)) {
+    logScopeEvent('warn', 'model_allowlist_denied', {
+      profileId: profile.id,
+      virtualKeyId: vkRow.id,
+      modelId: model.id,
+      modelPublicId: publicModel
+    });
     return {
       code: 'model_not_allowed',
       message: `Model ${publicModel} not allowed for this key`
@@ -81,7 +90,38 @@ export function resolveKey(
     return { code: 'model_not_found', message: 'Backend for model unavailable' };
   }
 
-  const resolved: ResolvedKey = { profile, virtualKey: vkRow, model, backend };
+  // Enforce backend scope: backend must be global or match key's profile
+  if (!isResourceAccessibleToProfile(backend.profileId, profile.id)) {
+    logScopeEvent('warn', 'backend_scope_denied', {
+      profileId: profile.id,
+      virtualKeyId: vkRow.id,
+      modelId: model.id,
+      modelPublicId: publicModel,
+      backendId: backend.id,
+      backendProfileId: backend.profileId
+    });
+    return {
+      code: 'model_not_allowed',
+      message: `Model ${publicModel} backend is not accessible to this profile`
+    };
+  }
+
+  if (backend.apiKey && !isEncryptedSecret(backend.apiKey)) {
+    db.update(schema.backends)
+      .set({
+        apiKey: encryptSecret(backend.apiKey),
+        updatedAt: new Date()
+      })
+      .where(eq(schema.backends.id, backend.id))
+      .run();
+  }
+
+  const resolved: ResolvedKey = {
+    profile,
+    virtualKey: vkRow,
+    model,
+    backend: { ...backend, apiKey: decryptSecret(backend.apiKey) }
+  };
   setCachedAuth(token, publicModel, resolved);
   return resolved;
 }

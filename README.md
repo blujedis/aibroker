@@ -1,4 +1,4 @@
-# Nostraproxy
+# AiBroker
 
 An opinionated, OpenAI-compatible LLM proxy with profiles, virtual API keys, budgets, guardrails, MCP support, and a first-class dashboard.
 
@@ -10,6 +10,7 @@ Built with **Node.js**, **TypeScript**, **SvelteKit 2 (Svelte 5 runes)**, **Tail
 - Parallel request handling with a configurable upstream concurrency limit
 - **Client profiles** with optional global `daily` / `weekly` / `monthly` / unlimited budgets
 - **Virtual API keys** tied to a profile, with their own budgets and optional model allow-lists
+- Profile-scoped resources with global fallback for backends, guardrails, MCP servers, and skills
 - Per-request cost attribution (input/output tokens × per-1M pricing)
 - **Guardrails** in three stages:
   - `pre` — inspect and redact (or block) the inbound payload
@@ -43,7 +44,7 @@ Override via env:
 BOOTSTRAP_ADMIN_EMAIL=you@example.com BOOTSTRAP_ADMIN_PASSWORD=changeme pnpm dev
 ```
 
-The SQLite DB is created automatically at `./data/nostraproxy.db` — no migrations to run.
+The SQLite DB is created automatically at `./data/aibroker.db` — no migrations to run.
 
 ## Using the proxy
 
@@ -64,6 +65,24 @@ The `model` field uses the **public id** you configured on the Models page, whic
 
 Streaming works identically — set `"stream": true` and the proxy forwards SSE frames end-to-end while running `during`-stage guardrails on each delta.
 
+## Profile-scoped resources
+
+AiBroker supports two scope types for configurable resources:
+
+- `Global` scope (`profile_id = null`): resource is available to every profile
+- `Profile` scope (`profile_id = <profile id>`): resource is only available to that profile
+
+Effective scope at request time uses this rule:
+
+- accessible resources = global resources + resources owned by the key's profile
+
+Behavior notes:
+
+- Backends inherit scope to all models attached to that backend
+- Virtual-key allow-lists are auto-cleaned on save; ineligible models are removed
+- Router rejects model usage when backend scope does not match key profile
+- Guardrails execute only from the effective scope of the request profile
+
 ## Environment variables
 
 | Variable | Default | Meaning |
@@ -71,6 +90,7 @@ Streaming works identically — set `"stream": true` and the proxy forwards SSE 
 | `BOOTSTRAP_ADMIN_EMAIL` | `admin@local` | Created on first run if no users exist |
 | `BOOTSTRAP_ADMIN_PASSWORD` | `admin` | Password for the bootstrap user |
 | `MAX_CONCURRENT_UPSTREAM` | `32` | Max parallel upstream fetches across the whole server |
+| `SCOPE_OBSERVABILITY_LOGS` | `1` | Set to `0` to disable structured scope decision logs |
 
 ## Scripts
 

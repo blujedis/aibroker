@@ -30,7 +30,7 @@
   }
 </script>
 
-<svelte:head><title>Requests · Nostraproxy</title></svelte:head>
+<svelte:head><title>Requests · AiBroker</title></svelte:head>
 
 <div class="flex flex-col gap-6">
   <div class="flex flex-wrap items-end justify-between gap-4">
@@ -48,51 +48,69 @@
       <div class="grid grid-cols-1 gap-4 md:grid-cols-4">
         <div class="flex flex-col gap-1.5">
           <Label>Profile</Label>
-          <Select
-            value={data.filters.profileId}
-            onchange={(e) => updateQuery({ profileId: e.currentTarget.value })}
+          <Select.Root
+            value={data.filters.profileId || undefined}
+            onValueChange={(v) => updateQuery({ profileId: v ?? "" })}
           >
-            <option value="">all</option>
-            {#each data.profiles as p (p.id)}
-              <option value={p.id}>{p.name}</option>
-            {/each}
-          </Select>
+            <Select.Trigger>
+              {data.profiles.find((p) => p.id === data.filters.profileId)
+                ?.name ?? "all"}
+            </Select.Trigger>
+            <Select.Content>
+              <Select.Item value="" label="all" />
+              {#each data.profiles as p (p.id)}
+                <Select.Item value={p.id} label={p.name} />
+              {/each}
+            </Select.Content>
+          </Select.Root>
         </div>
         <div class="flex flex-col gap-1.5">
           <Label>Virtual key</Label>
-          <Select
-            value={data.filters.vkeyId}
-            onchange={(e) => updateQuery({ vkeyId: e.currentTarget.value })}
+          <Select.Root
+            value={data.filters.vkeyId || undefined}
+            onValueChange={(v) => updateQuery({ vkeyId: v ?? "" })}
           >
-            <option value="">all</option>
-            {#each data.keys as k (k.id)}
-              <option value={k.id}>{k.name}</option>
-            {/each}
-          </Select>
+            <Select.Trigger>
+              {data.keys.find((k) => k.id === data.filters.vkeyId)?.name ??
+                "all"}
+            </Select.Trigger>
+            <Select.Content>
+              <Select.Item value="" label="all" />
+              {#each data.keys as k (k.id)}
+                <Select.Item value={k.id} label={k.name} />
+              {/each}
+            </Select.Content>
+          </Select.Root>
         </div>
         <div class="flex flex-col gap-1.5">
           <Label>Status</Label>
-          <Select
-            value={data.filters.status}
-            onchange={(e) => updateQuery({ status: e.currentTarget.value })}
+          <Select.Root
+            value={data.filters.status || undefined}
+            onValueChange={(v) => updateQuery({ status: v ?? "" })}
           >
-            <option value="">all</option>
-            <option value="success">success</option>
-            <option value="failed">failed</option>
-            <option value="blocked">blocked</option>
-          </Select>
+            <Select.Trigger>{data.filters.status || "all"}</Select.Trigger>
+            <Select.Content>
+              <Select.Item value="" label="all" />
+              <Select.Item value="success" />
+              <Select.Item value="failed" />
+              <Select.Item value="blocked" />
+            </Select.Content>
+          </Select.Root>
         </div>
         <div class="flex flex-col gap-1.5">
           <Label>Limit</Label>
-          <Select
+          <Select.Root
             value={String(data.filters.limit)}
-            onchange={(e) => updateQuery({ limit: e.currentTarget.value })}
+            onValueChange={(v) => updateQuery({ limit: v ?? "25" })}
           >
-            <option value="25">25</option>
-            <option value="100">100</option>
-            <option value="250">250</option>
-            <option value="500">500</option>
-          </Select>
+            <Select.Trigger>{data.filters.limit}</Select.Trigger>
+            <Select.Content>
+              <Select.Item value="25" />
+              <Select.Item value="100" />
+              <Select.Item value="250" />
+              <Select.Item value="500" />
+            </Select.Content>
+          </Select.Root>
         </div>
       </div>
     </CardContent>

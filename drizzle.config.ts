@@ -7,7 +7,7 @@ const config: Config = {
   out: './drizzle',
   dialect: process.env.DATABASE_DIALECT as Config['dialect'] ?? 'sqlite',
   dbCredentials: {
-    url: process.env.DATABASE_URL ?? 'file:./data/nostraproxy.db'
+    url: process.env.DATABASE_URL ?? 'file:./data/aibroker.db'
   }
 };
 

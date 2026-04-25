@@ -1,5 +1,5 @@
 import { fail, type Actions } from '@sveltejs/kit';
-import { eq } from 'drizzle-orm';
+import { eq, asc } from 'drizzle-orm';
 import { nanoid } from 'nanoid';
 import { db, schema } from '$lib/server/db/index.js';
 import { guardrailSummary } from '$lib/server/stats.js';
@@ -32,9 +32,15 @@ export const load: PageServerLoad = ({ url }) => {
   const end = url.searchParams.get('end') ?? undefined;
   const range = resolveRange(rangeKey, { start, end });
   const guardrails = db.select().from(schema.guardrails).all();
+  const profiles = db
+    .select()
+    .from(schema.profiles)
+    .orderBy(asc(schema.profiles.name))
+    .all();
   const summary = guardrailSummary(range);
   return {
     guardrails,
+    profiles,
     summary,
     rangeKey,
     start: start ?? '',
@@ -48,7 +54,16 @@ export const actions: Actions = {
     const name = String(form.get('name') ?? '').trim();
     const stage = String(form.get('stage') ?? 'pre') as 'pre' | 'during' | 'post';
     const configRaw = String(form.get('config') ?? '{}');
+    const profileId = String(form.get('profileId') ?? '').trim() || null;
+
     if (!name) return fail(400, { error: 'name required' });
+
+    // Validate profile exists if provided
+    if (profileId) {
+      const profile = db.query.profiles.findFirst({ where: eq(schema.profiles.id, profileId) });
+      if (!profile) return fail(400, { error: 'Profile not found' });
+    }
+
     try {
       JSON.parse(configRaw);
     } catch {
@@ -61,6 +76,7 @@ export const actions: Actions = {
         stage,
         kind: parseKind(form.get('kind')),
         config: configRaw,
+        profileId,
         priority: Number(form.get('priority') ?? 100) | 0,
         enabled: true
       })
@@ -72,6 +88,14 @@ export const actions: Actions = {
     const id = String(form.get('id') ?? '');
     if (!id) return fail(400, { error: 'Missing id' });
     const configRaw = String(form.get('config') ?? '{}');
+    const profileId = String(form.get('profileId') ?? '').trim() || null;
+
+    // Validate profile exists if provided
+    if (profileId) {
+      const profile = db.query.profiles.findFirst({ where: eq(schema.profiles.id, profileId) });
+      if (!profile) return fail(400, { error: 'Profile not found' });
+    }
+
     try {
       JSON.parse(configRaw);
     } catch {
@@ -83,6 +107,7 @@ export const actions: Actions = {
         stage: String(form.get('stage') ?? 'pre') as 'pre' | 'during' | 'post',
         kind: parseKind(form.get('kind')),
         config: configRaw,
+        profileId,
         priority: Number(form.get('priority') ?? 100) | 0,
         enabled: form.get('enabled') === 'on',
         updatedAt: new Date()

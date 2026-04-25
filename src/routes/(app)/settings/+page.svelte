@@ -1,11 +1,19 @@
 <script lang="ts">
-  import { Button, Card, CardContent, CardHeader } from "$lib/components/ui";
+  import {
+    Button,
+    Card,
+    CardContent,
+    CardHeader,
+    Input,
+    Label,
+  } from "$lib/components/ui";
   import { enhance } from "$app/forms";
+  import { Upload } from "lucide-svelte";
 
   let { data, form } = $props();
 </script>
 
-<svelte:head><title>Settings · Nostraproxy</title></svelte:head>
+<svelte:head><title>Settings · AiBroker</title></svelte:head>
 
 <div class="flex flex-col gap-6">
   <div>
@@ -93,6 +101,48 @@
           <span class="text-sm text-muted-foreground"
             >Removed {form.reaped} expired sessions.</span
           >
+        {/if}
+      </form>
+    </CardContent>
+  </Card>
+
+  <Card>
+    <CardHeader
+      title="Catalog import"
+      description="Upload a providersAndModels.json file to upsert the accessible providers and models tables."
+    />
+    <CardContent>
+      <form
+        method="POST"
+        action="?/catalogUpload"
+        enctype="multipart/form-data"
+        use:enhance
+        class="flex flex-wrap items-end gap-3"
+      >
+        <div class="flex-1 min-w-65">
+          <Label for="catalog-file">JSON file</Label>
+          <Input
+            id="catalog-file"
+            type="file"
+            name="file"
+            accept="application/json,.json"
+            required
+          />
+        </div>
+        <Button type="submit">
+          <Upload class="h-4 w-4 mr-1" /> Upload & upsert
+        </Button>
+        {#if form && "catalog" in form && form.catalog}
+          <p class="text-sm text-muted-foreground w-full">
+            Providers: <strong>{form.catalog.providersInserted}</strong>
+            inserted,
+            <strong>{form.catalog.providersUpdated}</strong> updated. Models:
+            <strong>{form.catalog.modelsInserted}</strong> inserted,
+            <strong>{form.catalog.modelsUpdated}</strong> updated.
+          </p>
+        {/if}
+        {#if form && "error" in form && form.error}
+          <p class="text-sm text-destructive w-full">{form.error}</p>
         {/if}
       </form>
     </CardContent>

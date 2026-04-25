@@ -75,7 +75,7 @@ export const POST: RequestHandler = async ({ request }) => {
   }
 
   // Pre-stage guardrails
-  const pre = runPreStage({ messages, model: publicModel });
+  const pre = runPreStage({ messages, model: publicModel, profileId: profile.id });
 
   if (pre.outcome.action === 'block') {
     const preLogs = pre.logs;
@@ -195,7 +195,7 @@ export const POST: RequestHandler = async ({ request }) => {
     ? (upstreamJson!.choices as Array<{ message?: { content?: string } }>)
     : [];
   const respText = choices.map((c) => c.message?.content ?? '').join('\n');
-  const post = runPostStage({ responseText: respText });
+  const post = runPostStage({ responseText: respText, profileId: profile.id });
   if (choices.length > 0 && post.responseText !== respText) {
     // Replace each message's content with redacted equivalents (rough — put the whole
     // redacted text on the first choice for simplicity).
@@ -420,7 +420,7 @@ async function handleStreaming(opts: {
         }
         const delta = obj.choices?.[0]?.delta?.content;
         if (typeof delta === 'string' && delta.length > 0) {
-          const res = runDuringChunk(delta);
+          const res = runDuringChunk(delta, profile.id);
           duringLogs = duringLogs.concat(res.logs);
           if (res.block) {
             return { frame: line, done: false, blocked: true, reason: res.logs.at(-1)?.reason ?? undefined };
@@ -452,7 +452,7 @@ async function handleStreaming(opts: {
 
   // When the response finishes, finalize logging.
   const finalize = async () => {
-    const post = runPostStage({ responseText: aggregatedContent });
+    const post = runPostStage({ responseText: aggregatedContent, profileId: profile.id });
     const inputTokens = promptTokens || estimateTokens(JSON.stringify(outgoingBody.messages ?? ''));
     const outputTokens = completionTokens || estimateTokens(aggregatedContent);
     const breakdown = computeCostBreakdown(model, { inputTokens, outputTokens });

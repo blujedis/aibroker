@@ -10,6 +10,7 @@
     Table,
     Textarea,
     Badge,
+    ConfirmDialog,
   } from "$lib/components/ui";
   import { enhance } from "$app/forms";
   import DateRangePicker from "$lib/components/date-range-picker.svelte";
@@ -18,6 +19,35 @@
 
   let { data } = $props();
   let editingId: string | null = $state(null);
+  let createStage = $state("pre");
+  let createKind = $state("regex_block");
+  let createProfileId = $state("");
+  let editStage = $state("pre");
+  let editKind = $state("regex_block");
+  let editProfileId = $state("");
+
+  function startEditing(g: (typeof data.guardrails)[number]) {
+    editingId = g.id;
+    editStage = g.stage;
+    editKind = g.kind;
+    editProfileId = g.profileId ?? "";
+  }
+  let confirmOpen = $state(false);
+  let deleteId: string | null = $state(null);
+  let deleteName = $state("");
+  let deleteFormEl: HTMLFormElement | null = null;
+
+  function askDelete(id: string, name: string) {
+    deleteId = id;
+    deleteName = name;
+    confirmOpen = true;
+  }
+
+  function submitDelete() {
+    if (!deleteId) return;
+    deleteFormEl?.requestSubmit();
+    confirmOpen = false;
+  }
 
   const summaryById = $derived.by(() => {
     const m = new Map<
@@ -34,9 +64,39 @@
     }
     return m;
   });
+
+  const profileNameById = $derived.by(() => {
+    const entries = data.profiles.map(
+      (profile) => [profile.id, profile.name] as const,
+    );
+    return new Map(entries);
+  });
+
+  function scopeLabel(profileId: string | null | undefined): string {
+    if (!profileId) return "Global";
+    return profileNameById.get(profileId) ?? "Profile-scoped";
+  }
 </script>
 
-<svelte:head><title>Guardrails · Nostraproxy</title></svelte:head>
+<svelte:head><title>Guardrails · AiBroker</title></svelte:head>
+
+<ConfirmDialog
+  bind:open={confirmOpen}
+  title="Delete guardrail?"
+  description={`This will permanently delete ${deleteName}.`}
+  confirmLabel="Delete"
+  on:confirm={submitDelete}
+/>
+
+<form
+  method="POST"
+  action="?/delete"
+  use:enhance
+  class="hidden"
+  bind:this={deleteFormEl}
+>
+  <input type="hidden" name="id" value={deleteId ?? ""} />
+</form>
 
 <div class="flex flex-col gap-6">
   <div class="flex flex-wrap items-end justify-between gap-4">
@@ -63,21 +123,27 @@
         </div>
         <div class="flex flex-col gap-1.5">
           <Label>Stage</Label>
-          <Select name="stage">
-            <option value="pre">pre</option>
-            <option value="during">during</option>
-            <option value="post">post</option>
-          </Select>
+          <Select.Root bind:value={createStage} name="stage">
+            <Select.Trigger>{createStage}</Select.Trigger>
+            <Select.Content>
+              <Select.Item value="pre" />
+              <Select.Item value="during" />
+              <Select.Item value="post" />
+            </Select.Content>
+          </Select.Root>
         </div>
         <div class="flex flex-col gap-1.5">
           <Label>Kind</Label>
-          <Select name="kind">
-            <option value="regex_block">regex_block</option>
-            <option value="regex_redact">regex_redact</option>
-            <option value="keyword_block">keyword_block</option>
-            <option value="max_tokens">max_tokens</option>
-            <option value="pii_redact">pii_redact</option>
-          </Select>
+          <Select.Root bind:value={createKind} name="kind">
+            <Select.Trigger>{createKind}</Select.Trigger>
+            <Select.Content>
+              <Select.Item value="regex_block" />
+              <Select.Item value="regex_redact" />
+              <Select.Item value="keyword_block" />
+              <Select.Item value="max_tokens" />
+              <Select.Item value="pii_redact" />
+            </Select.Content>
+          </Select.Root>
         </div>
         <div class="flex flex-col gap-1.5">
           <Label>Priority</Label><Input
@@ -85,6 +151,18 @@
             type="number"
             value="100"
           />
+        </div>
+        <div class="flex flex-col gap-1.5 md:col-span-2">
+          <Label>Scope</Label>
+          <Select.Root bind:value={createProfileId} name="profileId">
+            <Select.Trigger>{scopeLabel(createProfileId)}</Select.Trigger>
+            <Select.Content>
+              <Select.Item value="" label="Global" />
+              {#each data.profiles as profile (profile.id)}
+                <Select.Item value={profile.id} label={profile.name} />
+              {/each}
+            </Select.Content>
+          </Select.Root>
         </div>
         <div class="flex flex-col gap-1.5 md:col-span-6">
           <Label>Config (JSON)</Label>
@@ -115,6 +193,7 @@
             <th class="py-2 pr-4">Name</th>
             <th class="py-2 pr-4">Stage</th>
             <th class="py-2 pr-4">Kind</th>
+            <th class="py-2 pr-4">Scope</th>
             <th class="py-2 pr-4">Prio</th>
             <th class="py-2 pr-4">Runs</th>
             <th class="py-2 pr-4">Blocks</th>
@@ -146,18 +225,41 @@
                         required
                       />
                     </div>
-                    <Select name="stage" value={g.stage}>
-                      <option value="pre">pre</option>
-                      <option value="during">during</option>
-                      <option value="post">post</option>
-                    </Select>
-                    <Select name="kind" value={g.kind}>
-                      <option value="regex_block">regex_block</option>
-                      <option value="regex_redact">regex_redact</option>
-                      <option value="keyword_block">keyword_block</option>
-                      <option value="max_tokens">max_tokens</option>
-                      <option value="pii_redact">pii_redact</option>
-                    </Select>
+                    <Select.Root bind:value={editStage} name="stage">
+                      <Select.Trigger>{editStage}</Select.Trigger>
+                      <Select.Content>
+                        <Select.Item value="pre" />
+                        <Select.Item value="during" />
+                        <Select.Item value="post" />
+                      </Select.Content>
+                    </Select.Root>
+                    <Select.Root bind:value={editKind} name="kind">
+                      <Select.Trigger>{editKind}</Select.Trigger>
+                      <Select.Content>
+                        <Select.Item value="regex_block" />
+                        <Select.Item value="regex_redact" />
+                        <Select.Item value="keyword_block" />
+                        <Select.Item value="max_tokens" />
+                        <Select.Item value="pii_redact" />
+                      </Select.Content>
+                    </Select.Root>
+                    <div>
+                      <Label>Scope</Label>
+                      <Select.Root bind:value={editProfileId} name="profileId">
+                        <Select.Trigger
+                          >{scopeLabel(editProfileId)}</Select.Trigger
+                        >
+                        <Select.Content>
+                          <Select.Item value="" label="Global" />
+                          {#each data.profiles as profile (profile.id)}
+                            <Select.Item
+                              value={profile.id}
+                              label={profile.name}
+                            />
+                          {/each}
+                        </Select.Content>
+                      </Select.Root>
+                    </div>
                     <Input name="priority" type="number" value={g.priority} />
                     <label class="flex items-center gap-2 text-sm">
                       <input
@@ -193,6 +295,11 @@
                 <td class="py-2 pr-4 font-medium">{g.name}</td>
                 <td class="py-2 pr-4">{g.stage}</td>
                 <td class="py-2 pr-4 text-muted-foreground">{g.kind}</td>
+                <td class="py-2 pr-4">
+                  <Badge variant={g.profileId ? "default" : "outline"}>
+                    {scopeLabel(g.profileId)}
+                  </Badge>
+                </td>
                 <td class="py-2 pr-4 tabular-nums">{g.priority}</td>
                 <td class="py-2 pr-4 tabular-nums"
                   >{fmtInt(s?.totalRuns ?? 0)}</td
@@ -209,21 +316,18 @@
                   <Button
                     variant="ghost"
                     size="sm"
-                    onclick={() => (editingId = g.id)}
+                    onclick={() => startEditing(g)}
                   >
                     <Pencil class="h-4 w-4" />
                   </Button>
-                  <form
-                    method="POST"
-                    action="?/delete"
-                    use:enhance
-                    class="inline"
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    type="button"
+                    onclick={() => askDelete(g.id, g.name)}
                   >
-                    <input type="hidden" name="id" value={g.id} />
-                    <Button variant="ghost" size="sm" type="submit">
-                      <Trash2 class="h-4 w-4 text-destructive" />
-                    </Button>
-                  </form>
+                    <Trash2 class="h-4 w-4 text-destructive" />
+                  </Button>
                 </td>
               </tr>
             {/if}
@@ -231,7 +335,7 @@
           {#if data.guardrails.length === 0}
             <tr>
               <td
-                colspan="9"
+                colspan="10"
                 class="py-6 text-center text-sm text-muted-foreground"
               >
                 No guardrails yet.

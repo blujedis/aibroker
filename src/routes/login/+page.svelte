@@ -8,7 +8,7 @@
 </script>
 
 <svelte:head>
-  <title>Sign in · Nostraproxy</title>
+  <title>Sign in · AiBroker</title>
 </svelte:head>
 
 <div class="flex min-h-screen items-center justify-center bg-background p-4">
@@ -23,7 +23,7 @@
       </div>
       <div class="text-center">
         <h1 class="text-lg font-semibold tracking-tight">
-          Sign in to Nostraproxy
+          Sign in to AiBroker
         </h1>
         <p class="text-sm text-muted-foreground">LLM gateway administration</p>
       </div>
@@ -67,7 +67,7 @@
         {submitting ? "Signing in…" : "Sign in"}
       </Button>
       <p class="text-center text-xs text-muted-foreground">
-        Default admin is seeded on first launch. Check your <code>.env</code>.
+        Check <code>.env</code> to set the default credentials.
       </p>
     </form>
   </Card>

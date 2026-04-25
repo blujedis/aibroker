@@ -4,7 +4,8 @@ import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import * as schema from './schema.js';
 
-const urlFromEnv = process.env.DATABASE_URL ?? 'file:./data/nostraproxy.db';
+const urlFromEnv = process.env.DATABASE_URL ?? 'file:./data/aibroker.db';
+
 const filePath = urlFromEnv.startsWith('file:')
   ? urlFromEnv.slice('file:'.length)
   : urlFromEnv;

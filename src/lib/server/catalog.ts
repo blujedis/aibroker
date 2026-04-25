@@ -5,7 +5,6 @@ import { inferProvider } from '../provider-catalog.js';
 
 // Shape of providersAndModels.json at ingest time.
 export interface RawProvider {
-  name: string;
   baseUrl?: string;
   kind?: string;
 }
@@ -39,7 +38,7 @@ export interface RawModel {
 }
 
 export interface RawCatalog {
-  providers: RawProvider[];
+  providers: Record<string, RawProvider>;
   models: Record<string, RawModel>;
 }
 
@@ -70,8 +69,8 @@ export function ingestCatalog(raw: RawCatalog): IngestResult {
 
   db.transaction(() => {
     // Providers -----------------------------------------------------------
-    for (const p of raw.providers ?? []) {
-      const name = String(p.name ?? '').trim();
+    for (const [providerKey, p] of Object.entries(raw.providers ?? {})) {
+      const name = String(providerKey ?? '').trim();
       if (!name) continue;
       const inferred = inferProvider(name);
       const baseUrl = p.baseUrl?.trim() || inferred.baseUrl;

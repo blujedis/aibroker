@@ -13,9 +13,10 @@
     Badge,
     Combobox,
     TagsInput,
+    ConfirmDialog,
     type ComboboxItem,
   } from "$lib/components/ui";
-  import { Trash2, Pencil, Plus, Upload } from "lucide-svelte";
+  import { Trash2, Pencil, Plus } from "lucide-svelte";
 
   let { data, form } = $props();
 
@@ -26,6 +27,7 @@
     kind: "openai" | "anthropic" | "custom";
     baseUrl: string;
     apiKey: string;
+    profileId: string;
     enabled: boolean;
   }
   const emptyBackend = (): BackendDraft => ({
@@ -34,6 +36,7 @@
     kind: "openai",
     baseUrl: "",
     apiKey: "",
+    profileId: "",
     enabled: true,
   });
   let backendDraft = $state<BackendDraft>(emptyBackend());
@@ -54,6 +57,7 @@
       kind: b.kind,
       baseUrl: b.baseUrl,
       apiKey: "",
+      profileId: b.profileId ?? "",
       enabled: b.enabled,
     };
     backendProviderPick = null;
@@ -137,6 +141,14 @@
   let modelDraft = $state<ModelDraft>(emptyModel());
   let modelPick = $state<string | null>(null);
   let tagsJson = $state("[]");
+  let confirmBackendDeleteOpen = $state(false);
+  let confirmModelDeleteOpen = $state(false);
+  let backendDeleteId: string | null = $state(null);
+  let modelDeleteId: string | null = $state(null);
+  let backendDeleteName = $state("");
+  let modelDeleteName = $state("");
+  let backendDeleteFormEl: HTMLFormElement | null = null;
+  let modelDeleteFormEl: HTMLFormElement | null = null;
 
   const modelItems: ComboboxItem[] = $derived(
     data.accessibleModels.map((m) => ({
@@ -223,6 +235,30 @@
     modelDraft.tags = m.tagsParsed.slice();
   }
 
+  function askBackendDelete(id: string, name: string) {
+    backendDeleteId = id;
+    backendDeleteName = name;
+    confirmBackendDeleteOpen = true;
+  }
+
+  function askModelDelete(id: string, publicId: string) {
+    modelDeleteId = id;
+    modelDeleteName = publicId;
+    confirmModelDeleteOpen = true;
+  }
+
+  function submitBackendDelete() {
+    if (!backendDeleteId) return;
+    backendDeleteFormEl?.requestSubmit();
+    confirmBackendDeleteOpen = false;
+  }
+
+  function submitModelDelete() {
+    if (!modelDeleteId) return;
+    modelDeleteFormEl?.requestSubmit();
+    confirmModelDeleteOpen = false;
+  }
+
   const priceFields: { key: keyof ModelDraft; label: string }[] = [
     { key: "inputPricePerMTokens", label: "Input" },
     { key: "outputPricePerMTokens", label: "Output" },
@@ -236,9 +272,72 @@
   ];
 
   const backendSelectItems = $derived(
-    data.backends.map((b) => ({ value: b.id, label: `${b.name} (${b.kind})` })),
+    data.backends.map((b) => ({
+      value: b.id,
+      label: `${b.name} (${b.kind}) · ${scopeLabel(b.profileId)}`,
+    })),
+  );
+
+  const profileNameById = $derived.by(() => {
+    const entries = data.profiles.map(
+      (profile) => [profile.id, profile.name] as const,
+    );
+    return new Map(entries);
+  });
+
+  function scopeLabel(profileId: string | null | undefined): string {
+    if (!profileId) return "Global";
+    return profileNameById.get(profileId) ?? "Profile-scoped";
+  }
+
+  function backendScopeLabel(backendId: string): string {
+    const backend = data.backends.find(
+      (candidate) => candidate.id === backendId,
+    );
+    return scopeLabel(backend?.profileId);
+  }
+
+  const backendDraftLabel = $derived(
+    backendSelectItems.find((b) => b.value === modelDraft.backendId)?.label ??
+      "Select backend...",
   );
 </script>
+
+<ConfirmDialog
+  bind:open={confirmBackendDeleteOpen}
+  title="Delete backend?"
+  description={`This will permanently delete ${backendDeleteName}.`}
+  confirmLabel="Delete"
+  on:confirm={submitBackendDelete}
+/>
+
+<ConfirmDialog
+  bind:open={confirmModelDeleteOpen}
+  title="Delete model?"
+  description={`This will permanently delete ${modelDeleteName}.`}
+  confirmLabel="Delete"
+  on:confirm={submitModelDelete}
+/>
+
+<form
+  method="POST"
+  action="?/backendDelete"
+  use:enhance
+  class="hidden"
+  bind:this={backendDeleteFormEl}
+>
+  <input type="hidden" name="id" value={backendDeleteId ?? ""} />
+</form>
+
+<form
+  method="POST"
+  action="?/modelDelete"
+  use:enhance
+  class="hidden"
+  bind:this={modelDeleteFormEl}
+>
+  <input type="hidden" name="id" value={modelDeleteId ?? ""} />
+</form>
 
 <div class="space-y-8">
   <header>
@@ -248,52 +347,6 @@
       the accessible catalog to prefill fields automatically.
     </p>
   </header>
-
-  <!-- Catalog upload -->
-  <Card>
-    <CardHeader>
-      <h2 class="text-lg font-medium">Catalog import</h2>
-      <p class="text-sm text-muted-foreground">
-        Upload a providersAndModels.json file to upsert the accessible providers
-        and models tables.
-      </p>
-    </CardHeader>
-    <CardContent>
-      <form
-        method="POST"
-        action="?/catalogUpload"
-        enctype="multipart/form-data"
-        use:enhance
-        class="flex flex-wrap items-end gap-3"
-      >
-        <div class="flex-1 min-w-65">
-          <Label for="catalog-file">JSON file</Label>
-          <Input
-            id="catalog-file"
-            type="file"
-            name="file"
-            accept="application/json,.json"
-            required
-          />
-        </div>
-        <Button type="submit">
-          <Upload class="h-4 w-4 mr-1" /> Upload & upsert
-        </Button>
-        {#if form && "catalog" in form && form.catalog}
-          <p class="text-sm text-muted-foreground w-full">
-            Providers: <strong>{form.catalog.providersInserted}</strong>
-            inserted,
-            <strong>{form.catalog.providersUpdated}</strong> updated. Models:
-            <strong>{form.catalog.modelsInserted}</strong> inserted,
-            <strong>{form.catalog.modelsUpdated}</strong> updated.
-          </p>
-        {/if}
-        {#if form && "error" in form && form.error}
-          <p class="text-sm text-destructive w-full">{form.error}</p>
-        {/if}
-      </form>
-    </CardContent>
-  </Card>
 
   <!-- Backends -->
   <Card>
@@ -316,6 +369,7 @@
           <tr>
             <th class="text-left">Name</th>
             <th class="text-left">Kind</th>
+            <th class="text-left">Scope</th>
             <th class="text-left">Base URL</th>
             <th class="text-left">Enabled</th>
             <th></th>
@@ -326,6 +380,11 @@
             <tr>
               <td>{b.name}</td>
               <td><Badge variant="outline">{b.kind}</Badge></td>
+              <td>
+                <Badge variant={b.profileId ? "default" : "outline"}>
+                  {scopeLabel(b.profileId)}
+                </Badge>
+              </td>
               <td class="font-mono text-xs">{b.baseUrl}</td>
               <td>
                 {#if b.enabled}<Badge>Active</Badge>{:else}<Badge
@@ -340,17 +399,14 @@
                 >
                   <Pencil class="h-4 w-4" />
                 </Button>
-                <form
-                  method="POST"
-                  action="?/backendDelete"
-                  use:enhance
-                  class="inline"
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  type="button"
+                  onclick={() => askBackendDelete(b.id, b.name)}
                 >
-                  <input type="hidden" name="id" value={b.id} />
-                  <Button variant="ghost" size="sm" type="submit">
-                    <Trash2 class="h-4 w-4" />
-                  </Button>
-                </form>
+                  <Trash2 class="h-4 w-4" />
+                </Button>
               </td>
             </tr>
           {/each}
@@ -393,11 +449,30 @@
         </div>
         <div>
           <Label for="backend-kind">Kind</Label>
-          <Select id="backend-kind" name="kind" bind:value={backendDraft.kind}>
-            <option value="openai">openai</option>
-            <option value="anthropic">anthropic</option>
-            <option value="custom">custom</option>
-          </Select>
+          <Select.Root name="kind" bind:value={backendDraft.kind}>
+            <Select.Trigger id="backend-kind"
+              >{backendDraft.kind}</Select.Trigger
+            >
+            <Select.Content>
+              <Select.Item value="openai" />
+              <Select.Item value="anthropic" />
+              <Select.Item value="custom" />
+            </Select.Content>
+          </Select.Root>
+        </div>
+        <div>
+          <Label for="backend-profile">Scope</Label>
+          <Select.Root name="profileId" bind:value={backendDraft.profileId}>
+            <Select.Trigger id="backend-profile"
+              >{scopeLabel(backendDraft.profileId)}</Select.Trigger
+            >
+            <Select.Content>
+              <Select.Item value="" label="Global" />
+              {#each data.profiles as profile (profile.id)}
+                <Select.Item value={profile.id} label={profile.name} />
+              {/each}
+            </Select.Content>
+          </Select.Root>
         </div>
         <div class="md:col-span-2">
           <Label for="backend-baseurl">Base URL</Label>
@@ -462,6 +537,7 @@
           <tr>
             <th class="text-left">Public id</th>
             <th class="text-left">Backend</th>
+            <th class="text-left">Backend scope</th>
             <th class="text-left">Upstream</th>
             <th class="text-left">Input / Output $</th>
             <th class="text-left">Enabled</th>
@@ -476,6 +552,11 @@
                 <div class="text-xs text-muted-foreground">{m.displayName}</div>
               </td>
               <td>{m.backendName ?? "—"}</td>
+              <td>
+                <Badge variant={m.backendProfileId ? "default" : "outline"}>
+                  {scopeLabel(m.backendProfileId)}
+                </Badge>
+              </td>
               <td class="font-mono text-xs">{m.upstreamId}</td>
               <td class="text-xs font-mono">
                 ${m.inputPricePerMTokens.toFixed(2)} / ${m.outputPricePerMTokens.toFixed(
@@ -491,17 +572,14 @@
                 <Button variant="ghost" size="sm" onclick={() => editModel(m)}>
                   <Pencil class="h-4 w-4" />
                 </Button>
-                <form
-                  method="POST"
-                  action="?/modelDelete"
-                  use:enhance
-                  class="inline"
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  type="button"
+                  onclick={() => askModelDelete(m.id, m.publicId)}
                 >
-                  <input type="hidden" name="id" value={m.id} />
-                  <Button variant="ghost" size="sm" type="submit">
-                    <Trash2 class="h-4 w-4" />
-                  </Button>
-                </form>
+                  <Trash2 class="h-4 w-4" />
+                </Button>
               </td>
             </tr>
           {/each}
@@ -554,16 +632,19 @@
           </div>
           <div>
             <Label for="model-backend">Backend</Label>
-            <Select
-              id="model-backend"
-              name="backendId"
-              bind:value={modelDraft.backendId}
-              required
-            >
-              {#each backendSelectItems as item (item.value)}
-                <option value={item.value}>{item.label}</option>
-              {/each}
-            </Select>
+            <Select.Root name="backendId" bind:value={modelDraft.backendId}>
+              <Select.Trigger id="model-backend"
+                >{backendDraftLabel}</Select.Trigger
+              >
+              <Select.Content>
+                {#each backendSelectItems as item (item.value)}
+                  <Select.Item value={item.value} label={item.label} />
+                {/each}
+              </Select.Content>
+            </Select.Root>
+            <p class="mt-1 text-xs text-muted-foreground">
+              Effective scope: {backendScopeLabel(modelDraft.backendId)}
+            </p>
           </div>
           <div>
             <Label for="model-upstream">Upstream id</Label>

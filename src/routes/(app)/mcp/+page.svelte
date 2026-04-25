@@ -10,15 +10,72 @@
     Table,
     Textarea,
     Badge,
+    ConfirmDialog,
   } from "$lib/components/ui";
   import { enhance } from "$app/forms";
   import { Trash2, Pencil, X, Check } from "lucide-svelte";
 
   let { data } = $props();
   let editingId: string | null = $state(null);
+  let createTransport = $state<"stdio" | "sse" | "http">("stdio");
+  let createProfileId = $state("");
+  let editTransport = $state<"stdio" | "sse" | "http">("stdio");
+  let editProfileId = $state("");
+
+  function startEditing(s: (typeof data.servers)[number]) {
+    editingId = s.id;
+    editTransport = s.transport as "stdio" | "sse" | "http";
+    editProfileId = s.profileId ?? "";
+  }
+  let confirmOpen = $state(false);
+  let deleteId: string | null = $state(null);
+  let deleteName = $state("");
+  let deleteFormEl: HTMLFormElement | null = null;
+
+  function askDelete(id: string, name: string) {
+    deleteId = id;
+    deleteName = name;
+    confirmOpen = true;
+  }
+
+  function submitDelete() {
+    if (!deleteId) return;
+    deleteFormEl?.requestSubmit();
+    confirmOpen = false;
+  }
+
+  const profileNameById = $derived.by(() => {
+    const entries = data.profiles.map(
+      (profile) => [profile.id, profile.name] as const,
+    );
+    return new Map(entries);
+  });
+
+  function scopeLabel(profileId: string | null | undefined): string {
+    if (!profileId) return "Global";
+    return profileNameById.get(profileId) ?? "Profile-scoped";
+  }
 </script>
 
-<svelte:head><title>MCP servers · Nostraproxy</title></svelte:head>
+<svelte:head><title>MCP servers · AiBroker</title></svelte:head>
+
+<ConfirmDialog
+  bind:open={confirmOpen}
+  title="Delete MCP server?"
+  description={`This will permanently delete ${deleteName}.`}
+  confirmLabel="Delete"
+  on:confirm={submitDelete}
+/>
+
+<form
+  method="POST"
+  action="?/delete"
+  use:enhance
+  class="hidden"
+  bind:this={deleteFormEl}
+>
+  <input type="hidden" name="id" value={deleteId ?? ""} />
+</form>
 
 <div class="flex flex-col gap-6">
   <div>
@@ -47,11 +104,14 @@
         </div>
         <div class="flex flex-col gap-1.5">
           <Label>Transport</Label>
-          <Select name="transport">
-            <option value="stdio">stdio</option>
-            <option value="sse">sse</option>
-            <option value="http">http</option>
-          </Select>
+          <Select.Root bind:value={createTransport} name="transport">
+            <Select.Trigger>{createTransport}</Select.Trigger>
+            <Select.Content>
+              <Select.Item value="stdio" />
+              <Select.Item value="sse" />
+              <Select.Item value="http" />
+            </Select.Content>
+          </Select.Root>
         </div>
         <div class="flex flex-col gap-1.5 md:col-span-3">
           <Label>Command (stdio)</Label>
@@ -59,6 +119,18 @@
             name="command"
             placeholder="npx -y @modelcontextprotocol/server-filesystem"
           />
+        </div>
+        <div class="flex flex-col gap-1.5 md:col-span-3">
+          <Label>Scope</Label>
+          <Select.Root bind:value={createProfileId} name="profileId">
+            <Select.Trigger>{scopeLabel(createProfileId)}</Select.Trigger>
+            <Select.Content>
+              <Select.Item value="" label="Global" />
+              {#each data.profiles as profile (profile.id)}
+                <Select.Item value={profile.id} label={profile.name} />
+              {/each}
+            </Select.Content>
+          </Select.Root>
         </div>
         <div class="flex flex-col gap-1.5 md:col-span-3">
           <Label>Args (JSON)</Label>
@@ -90,6 +162,7 @@
           >
             <th class="py-2 pr-4">Name</th>
             <th class="py-2 pr-4">Transport</th>
+            <th class="py-2 pr-4">Scope</th>
             <th class="py-2 pr-4">Target</th>
             <th class="py-2 pr-4">Status</th>
             <th class="py-2 text-right">Actions</th>
@@ -112,16 +185,36 @@
                   >
                     <input type="hidden" name="id" value={s.id} />
                     <Input name="name" value={s.name} class="md:col-span-2" />
-                    <Select name="transport" value={s.transport}>
-                      <option value="stdio">stdio</option>
-                      <option value="sse">sse</option>
-                      <option value="http">http</option>
-                    </Select>
+                    <Select.Root bind:value={editTransport} name="transport">
+                      <Select.Trigger>{editTransport}</Select.Trigger>
+                      <Select.Content>
+                        <Select.Item value="stdio" />
+                        <Select.Item value="sse" />
+                        <Select.Item value="http" />
+                      </Select.Content>
+                    </Select.Root>
                     <Input
                       name="command"
                       value={s.command ?? ""}
                       class="md:col-span-3"
                     />
+                    <div class="md:col-span-3">
+                      <Label>Scope</Label>
+                      <Select.Root bind:value={editProfileId} name="profileId">
+                        <Select.Trigger
+                          >{scopeLabel(editProfileId)}</Select.Trigger
+                        >
+                        <Select.Content>
+                          <Select.Item value="" label="Global" />
+                          {#each data.profiles as profile (profile.id)}
+                            <Select.Item
+                              value={profile.id}
+                              label={profile.name}
+                            />
+                          {/each}
+                        </Select.Content>
+                      </Select.Root>
+                    </div>
                     <div class="md:col-span-3">
                       <Label>Args (JSON)</Label>
                       <Textarea name="args" rows={2}>{s.args ?? "[]"}</Textarea>
@@ -162,6 +255,11 @@
               <tr class="border-b border-border/60">
                 <td class="py-2 pr-4 font-medium">{s.name}</td>
                 <td class="py-2 pr-4">{s.transport}</td>
+                <td class="py-2 pr-4">
+                  <Badge variant={s.profileId ? "default" : "outline"}>
+                    {scopeLabel(s.profileId)}
+                  </Badge>
+                </td>
                 <td class="py-2 pr-4 text-muted-foreground font-mono text-xs">
                   {s.transport === "stdio"
                     ? (s.command ?? "—")
@@ -175,21 +273,18 @@
                   <Button
                     variant="ghost"
                     size="sm"
-                    onclick={() => (editingId = s.id)}
+                    onclick={() => startEditing(s)}
                   >
                     <Pencil class="h-4 w-4" />
                   </Button>
-                  <form
-                    method="POST"
-                    action="?/delete"
-                    use:enhance
-                    class="inline"
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    type="button"
+                    onclick={() => askDelete(s.id, s.name)}
                   >
-                    <input type="hidden" name="id" value={s.id} />
-                    <Button variant="ghost" size="sm" type="submit">
-                      <Trash2 class="h-4 w-4 text-destructive" />
-                    </Button>
-                  </form>
+                    <Trash2 class="h-4 w-4 text-destructive" />
+                  </Button>
                 </td>
               </tr>
             {/if}
@@ -197,7 +292,7 @@
           {#if data.servers.length === 0}
             <tr>
               <td
-                colspan="5"
+                colspan="6"
                 class="py-6 text-center text-sm text-muted-foreground"
               >
                 No MCP servers registered.

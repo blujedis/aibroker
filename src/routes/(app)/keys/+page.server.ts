@@ -2,10 +2,12 @@ import { fail, type Actions } from '@sveltejs/kit';
 import { eq } from 'drizzle-orm';
 import { nanoid } from 'nanoid';
 import { db, schema } from '$lib/server/db/index.js';
+import { filterEligibleModels } from '$lib/server/scope.js';
+import { logScopeEvent } from '$lib/server/observability/scope.js';
 import type { PageServerLoad } from './$types';
 
 function generateToken(): string {
-  return 'np-' + nanoid(40);
+  return 'ab-' + nanoid(40);
 }
 
 export const load: PageServerLoad = () => {
@@ -13,7 +15,6 @@ export const load: PageServerLoad = () => {
     .select({
       id: schema.virtualKeys.id,
       name: schema.virtualKeys.name,
-      token: schema.virtualKeys.token,
       profileId: schema.virtualKeys.profileId,
       profileName: schema.profiles.name,
       budget: schema.virtualKeys.budget,
@@ -27,7 +28,15 @@ export const load: PageServerLoad = () => {
     .all();
 
   const profiles = db.select().from(schema.profiles).all();
-  const models = db.select().from(schema.models).all();
+  const models = db
+    .select()
+    .from(schema.models)
+    .leftJoin(schema.backends, eq(schema.backends.id, schema.models.backendId))
+    .all()
+    .map((row) => ({
+      ...row.models,
+      backendProfileId: row.backends?.profileId ?? null
+    }));
 
   // gather allowed model ids per key
   const allowed = db.select().from(schema.virtualKeyModels).all();
@@ -62,32 +71,67 @@ export const actions: Actions = {
     const name = String(form.get('name') ?? '').trim();
     const profileId = String(form.get('profileId') ?? '');
     if (!name || !profileId) return fail(400, { error: 'Name and profile are required' });
+
     const id = nanoid();
+    const token = generateToken();
     db.insert(schema.virtualKeys)
       .values({
         id,
         profileId,
         name,
-        token: generateToken(),
+        token,
         budget: parseBudget(form.get('budget')),
         budgetFrequency: parseFreq(form.get('budgetFrequency')),
         enabled: true
       })
       .run();
-    const modelIds = form.getAll('modelIds').map(String).filter(Boolean);
-    for (const m of modelIds) {
+
+    // Filter submitted modelIds to only eligible ones (auto-clean)
+    const submittedModelIds = form.getAll('modelIds').map(String).filter(Boolean);
+    const allModels = db
+      .select()
+      .from(schema.models)
+      .leftJoin(schema.backends, eq(schema.backends.id, schema.models.backendId))
+      .all();
+
+    const modelsWithBackendInfo = allModels.map((row) => ({
+      id: row.models.id,
+      backendProfileId: row.backends?.profileId ?? null
+    }));
+
+    const eligibleModelIds = filterEligibleModels(modelsWithBackendInfo, profileId);
+    const ineligibleCount = submittedModelIds.length - eligibleModelIds.length;
+
+    if (ineligibleCount > 0) {
+      logScopeEvent('info', 'virtual_key_models_pruned_on_create', {
+        profileId,
+        virtualKeyId: id,
+        submittedModelCount: submittedModelIds.length,
+        keptModelCount: eligibleModelIds.length,
+        prunedModelCount: ineligibleCount
+      });
+    }
+
+    for (const m of eligibleModelIds) {
       db.insert(schema.virtualKeyModels).values({ virtualKeyId: id, modelId: m }).run();
     }
-    return { ok: true };
+
+    return {
+      ok: true,
+      createdToken: token,
+      ...(ineligibleCount > 0 && { warning: `${ineligibleCount} model(s) were excluded due to profile scope mismatch` })
+    };
   },
   update: async ({ request }) => {
     const form = await request.formData();
     const id = String(form.get('id') ?? '');
     if (!id) return fail(400, { error: 'Missing id' });
+
+    const profileId = String(form.get('profileId') ?? '');
     db.update(schema.virtualKeys)
       .set({
         name: String(form.get('name') ?? '').trim(),
-        profileId: String(form.get('profileId') ?? ''),
+        profileId,
         budget: parseBudget(form.get('budget')),
         budgetFrequency: parseFreq(form.get('budgetFrequency')),
         enabled: form.get('enabled') === 'on',
@@ -96,25 +140,55 @@ export const actions: Actions = {
       .where(eq(schema.virtualKeys.id, id))
       .run();
 
-    // replace allow-list
+    // replace allow-list with eligible models only (auto-clean)
     db.delete(schema.virtualKeyModels)
       .where(eq(schema.virtualKeyModels.virtualKeyId, id))
       .run();
-    const modelIds = form.getAll('modelIds').map(String).filter(Boolean);
-    for (const m of modelIds) {
+
+    const submittedModelIds = form.getAll('modelIds').map(String).filter(Boolean);
+    const allModels = db
+      .select()
+      .from(schema.models)
+      .leftJoin(schema.backends, eq(schema.backends.id, schema.models.backendId))
+      .all();
+
+    const modelsWithBackendInfo = allModels.map((row) => ({
+      id: row.models.id,
+      backendProfileId: row.backends?.profileId ?? null
+    }));
+
+    const eligibleModelIds = filterEligibleModels(modelsWithBackendInfo, profileId);
+    const ineligibleCount = submittedModelIds.length - eligibleModelIds.length;
+
+    if (ineligibleCount > 0) {
+      logScopeEvent('info', 'virtual_key_models_pruned_on_update', {
+        profileId,
+        virtualKeyId: id,
+        submittedModelCount: submittedModelIds.length,
+        keptModelCount: eligibleModelIds.length,
+        prunedModelCount: ineligibleCount
+      });
+    }
+
+    for (const m of eligibleModelIds) {
       db.insert(schema.virtualKeyModels).values({ virtualKeyId: id, modelId: m }).run();
     }
-    return { ok: true };
+
+    return {
+      ok: true,
+      ...(ineligibleCount > 0 && { warning: `${ineligibleCount} model(s) were excluded due to profile scope mismatch` })
+    };
   },
   rotate: async ({ request }) => {
     const form = await request.formData();
     const id = String(form.get('id') ?? '');
     if (!id) return fail(400, { error: 'Missing id' });
+    const token = generateToken();
     db.update(schema.virtualKeys)
-      .set({ token: generateToken(), updatedAt: new Date() })
+      .set({ token, updatedAt: new Date() })
       .where(eq(schema.virtualKeys.id, id))
       .run();
-    return { ok: true };
+    return { ok: true, rotatedToken: token };
   },
   delete: async ({ request }) => {
     const form = await request.formData();

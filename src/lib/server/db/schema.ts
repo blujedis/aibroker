@@ -27,7 +27,7 @@ export const users = sqliteTable('users', {
   passwordHash: text('password_hash').notNull(),
   role: text('role', { enum: ['admin', 'operator'] })
     .notNull()
-    .default('admin'),
+    .default('operator'),
   ...timestamps
 });
 
@@ -49,17 +49,22 @@ export const sessions = sqliteTable(
 // ────────────────────────────────────────────────────────────────
 // Upstream backends (OpenAI, Anthropic, etc.) — raw providers
 // ────────────────────────────────────────────────────────────────
-export const backends = sqliteTable('backends', {
-  id: text('id').primaryKey(),
-  name: text('name').notNull(),
-  kind: text('kind', { enum: ['openai', 'anthropic', 'custom'] })
-    .notNull()
-    .default('openai'),
-  baseUrl: text('base_url').notNull(),
-  apiKey: text('api_key').notNull(), // stored server-side; never exposed to client
-  enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
-  ...timestamps
-});
+export const backends = sqliteTable(
+  'backends',
+  {
+    id: text('id').primaryKey(),
+    name: text('name').notNull(),
+    kind: text('kind', { enum: ['openai', 'anthropic', 'custom'] })
+      .notNull()
+      .default('openai'),
+    baseUrl: text('base_url').notNull(),
+    apiKey: text('api_key').notNull(), // stored server-side; never exposed to client
+    profileId: text('profile_id').references(() => profiles.id, { onDelete: 'set null' }),
+    enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+    ...timestamps
+  },
+  (t) => [index('backends_profile_idx').on(t.profileId)]
+);
 
 // Models that the proxy advertises. Each maps to a backend + upstream model id.
 export const models = sqliteTable(
@@ -286,20 +291,25 @@ export const requestLogs = sqliteTable(
 // ────────────────────────────────────────────────────────────────
 // Guardrails
 // ────────────────────────────────────────────────────────────────
-export const guardrails = sqliteTable('guardrails', {
-  id: text('id').primaryKey(),
-  name: text('name').notNull(),
-  description: text('description'),
-  stage: text('stage', { enum: ['pre', 'during', 'post'] }).notNull(),
-  kind: text('kind', {
-    enum: ['regex_block', 'regex_redact', 'max_tokens', 'pii_redact', 'keyword_block']
-  }).notNull(),
-  // JSON-serialized configuration for the kind
-  config: text('config').notNull().default('{}'),
-  enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
-  priority: integer('priority').notNull().default(100),
-  ...timestamps
-});
+export const guardrails = sqliteTable(
+  'guardrails',
+  {
+    id: text('id').primaryKey(),
+    name: text('name').notNull(),
+    description: text('description'),
+    stage: text('stage', { enum: ['pre', 'during', 'post'] }).notNull(),
+    kind: text('kind', {
+      enum: ['regex_block', 'regex_redact', 'max_tokens', 'pii_redact', 'keyword_block']
+    }).notNull(),
+    // JSON-serialized configuration for the kind
+    config: text('config').notNull().default('{}'),
+    profileId: text('profile_id').references(() => profiles.id, { onDelete: 'set null' }),
+    enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+    priority: integer('priority').notNull().default(100),
+    ...timestamps
+  },
+  (t) => [index('guardrails_profile_idx').on(t.profileId)]
+);
 
 export const guardrailLogs = sqliteTable(
   'guardrail_logs',
@@ -331,30 +341,40 @@ export const guardrailLogs = sqliteTable(
 // ────────────────────────────────────────────────────────────────
 // MCP servers & skills instructions
 // ────────────────────────────────────────────────────────────────
-export const mcpServers = sqliteTable('mcp_servers', {
-  id: text('id').primaryKey(),
-  name: text('name').notNull(),
-  description: text('description'),
-  transport: text('transport', { enum: ['stdio', 'sse', 'http'] })
-    .notNull()
-    .default('stdio'),
-  // stdio: command + args. sse/http: url.
-  command: text('command'),
-  args: text('args'), // JSON array
-  env: text('env'), // JSON object
-  url: text('url'),
-  enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
-  ...timestamps
-});
+export const mcpServers = sqliteTable(
+  'mcp_servers',
+  {
+    id: text('id').primaryKey(),
+    name: text('name').notNull(),
+    description: text('description'),
+    transport: text('transport', { enum: ['stdio', 'sse', 'http'] })
+      .notNull()
+      .default('stdio'),
+    // stdio: command + args. sse/http: url.
+    command: text('command'),
+    args: text('args'), // JSON array
+    env: text('env'), // JSON object
+    url: text('url'),
+    profileId: text('profile_id').references(() => profiles.id, { onDelete: 'set null' }),
+    enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+    ...timestamps
+  },
+  (t) => [index('mcp_servers_profile_idx').on(t.profileId)]
+);
 
-export const skills = sqliteTable('skills', {
-  id: text('id').primaryKey(),
-  name: text('name').notNull(),
-  description: text('description'),
-  instructions: text('instructions').notNull(),
-  enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
-  ...timestamps
-});
+export const skills = sqliteTable(
+  'skills',
+  {
+    id: text('id').primaryKey(),
+    name: text('name').notNull(),
+    description: text('description'),
+    instructions: text('instructions').notNull(),
+    profileId: text('profile_id').references(() => profiles.id, { onDelete: 'set null' }),
+    enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+    ...timestamps
+  },
+  (t) => [index('skills_profile_idx').on(t.profileId)]
+);
 
 // ────────────────────────────────────────────────────────────────
 // Inferred types

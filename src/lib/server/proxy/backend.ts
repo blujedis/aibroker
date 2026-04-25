@@ -1,4 +1,5 @@
 import type { Backend } from '../db/schema.js';
+import { decryptSecret } from '../secrets.js';
 
 export interface UpstreamRequestInit {
   backend: Backend;
@@ -12,16 +13,17 @@ export interface UpstreamRequestInit {
 export async function callUpstreamChat(init: UpstreamRequestInit): Promise<Response> {
   const { backend, upstreamModel, body, stream, signal } = init;
   const url = backend.baseUrl.replace(/\/$/, '') + '/chat/completions';
+  const apiKey = decryptSecret(backend.apiKey);
 
   const headers: Record<string, string> = {
     'content-type': 'application/json'
   };
 
   if (backend.kind === 'anthropic') {
-    headers['x-api-key'] = backend.apiKey;
+    headers['x-api-key'] = apiKey;
     headers['anthropic-version'] = '2023-06-01';
   } else {
-    headers['authorization'] = `Bearer ${backend.apiKey}`;
+    headers['authorization'] = `Bearer ${apiKey}`;
   }
 
   const upstreamBody = {
@@ -40,12 +42,13 @@ export async function callUpstreamChat(init: UpstreamRequestInit): Promise<Respo
 
 export async function listUpstreamModels(backend: Backend): Promise<unknown> {
   const url = backend.baseUrl.replace(/\/$/, '') + '/models';
+  const apiKey = decryptSecret(backend.apiKey);
   const headers: Record<string, string> = {};
   if (backend.kind === 'anthropic') {
-    headers['x-api-key'] = backend.apiKey;
+    headers['x-api-key'] = apiKey;
     headers['anthropic-version'] = '2023-06-01';
   } else {
-    headers['authorization'] = `Bearer ${backend.apiKey}`;
+    headers['authorization'] = `Bearer ${apiKey}`;
   }
   const res = await fetch(url, { headers });
   if (!res.ok) throw new Error(`upstream models list failed (${res.status})`);

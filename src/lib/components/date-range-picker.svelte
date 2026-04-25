@@ -1,6 +1,5 @@
 <script lang="ts">
-  import { Label } from "$lib/components/ui";
-  import Select from "$lib/components/ui/select.svelte";
+  import { Label, Select } from "$lib/components/ui";
   import Input from "$lib/components/ui/input.svelte";
   import { RANGE_OPTIONS, type RangeKey } from "$lib/utils/date-range";
   import { goto } from "$app/navigation";
@@ -12,6 +11,10 @@
     end?: string;
   }
   let { range, start = "", end = "" }: Props = $props();
+
+  let rangeLabel = $derived(
+    RANGE_OPTIONS.find((o) => o.value === range)?.label ?? "Select range...",
+  );
 
   function apply() {
     const url = new URL(page.url);
@@ -36,11 +39,16 @@
 <div class="flex flex-wrap items-end gap-3">
   <div class="flex flex-col gap-1">
     <Label for="range-select">Date range</Label>
-    <Select id="range-select" bind:value={range} onchange={apply} class="w-44">
-      {#each RANGE_OPTIONS as opt (opt.value)}
-        <option value={opt.value}>{opt.label}</option>
-      {/each}
-    </Select>
+    <Select.Root bind:value={range} onValueChange={() => apply()}>
+      <Select.Trigger id="range-select" class="w-44"
+        >{rangeLabel}</Select.Trigger
+      >
+      <Select.Content>
+        {#each RANGE_OPTIONS as opt (opt.value)}
+          <Select.Item value={opt.value} label={opt.label} />
+        {/each}
+      </Select.Content>
+    </Select.Root>
   </div>
   {#if range === "custom"}
     <div class="flex flex-col gap-1">

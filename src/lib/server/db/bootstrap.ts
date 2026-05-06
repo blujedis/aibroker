@@ -8,6 +8,11 @@ CREATE TABLE IF NOT EXISTS users (
   name TEXT NOT NULL,
   password_hash TEXT NOT NULL,
   role TEXT NOT NULL DEFAULT 'operator',
+  is_superadmin INTEGER NOT NULL DEFAULT 0,
+  created_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  mfa_enabled INTEGER NOT NULL DEFAULT 0,
+  mfa_secret TEXT,
+  mfa_enrolled_at INTEGER,
   created_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
   updated_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
 );
@@ -16,9 +21,103 @@ CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   expires_at INTEGER NOT NULL,
+  is_mfa_complete INTEGER NOT NULL DEFAULT 1,
   created_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
 );
 CREATE INDEX IF NOT EXISTS sessions_user_idx ON sessions(user_id);
+
+CREATE TABLE IF NOT EXISTS refresh_tokens (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  token_hash TEXT NOT NULL UNIQUE,
+  expires_at INTEGER NOT NULL,
+  is_mfa_complete INTEGER NOT NULL DEFAULT 1,
+  revoked_at INTEGER,
+  created_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS refresh_tokens_token_hash_uniq ON refresh_tokens(token_hash);
+CREATE INDEX IF NOT EXISTS refresh_tokens_user_idx ON refresh_tokens(user_id);
+CREATE INDEX IF NOT EXISTS refresh_tokens_expires_idx ON refresh_tokens(expires_at);
+
+CREATE TABLE IF NOT EXISTS mfa_recovery_codes (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  code_hash TEXT NOT NULL UNIQUE,
+  used_at INTEGER,
+  created_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS mfa_recovery_codes_code_hash_uniq ON mfa_recovery_codes(code_hash);
+CREATE INDEX IF NOT EXISTS mfa_recovery_codes_user_idx ON mfa_recovery_codes(user_id);
+CREATE INDEX IF NOT EXISTS mfa_recovery_codes_used_idx ON mfa_recovery_codes(used_at);
+
+CREATE TABLE IF NOT EXISTS mfa_break_glass_tokens (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  token_hash TEXT NOT NULL UNIQUE,
+  expires_at INTEGER NOT NULL,
+  used_at INTEGER,
+  created_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS mfa_break_glass_tokens_token_hash_uniq ON mfa_break_glass_tokens(token_hash);
+CREATE INDEX IF NOT EXISTS mfa_break_glass_tokens_user_idx ON mfa_break_glass_tokens(user_id);
+CREATE INDEX IF NOT EXISTS mfa_break_glass_tokens_expires_idx ON mfa_break_glass_tokens(expires_at);
+
+CREATE TABLE IF NOT EXISTS user_identities (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  provider TEXT NOT NULL,
+  provider_user_id TEXT NOT NULL,
+  provider_email TEXT,
+  linked_at INTEGER NOT NULL,
+  created_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS user_identities_provider_user_uniq ON user_identities(provider, provider_user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS user_identities_user_provider_uniq ON user_identities(user_id, provider);
+CREATE INDEX IF NOT EXISTS user_identities_user_idx ON user_identities(user_id);
+
+CREATE TABLE IF NOT EXISTS oauth_states (
+  id TEXT PRIMARY KEY,
+  state TEXT NOT NULL,
+  code_verifier TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  intent TEXT NOT NULL DEFAULT 'login',
+  actor_user_id TEXT,
+  expires_at INTEGER NOT NULL,
+  consumed_at INTEGER,
+  created_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS oauth_states_state_uniq ON oauth_states(state);
+CREATE INDEX IF NOT EXISTS oauth_states_expires_idx ON oauth_states(expires_at);
+
+CREATE TABLE IF NOT EXISTS user_invitations (
+  id TEXT PRIMARY KEY,
+  email TEXT NOT NULL,
+  role TEXT NOT NULL,
+  profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  token_hash TEXT NOT NULL,
+  custom_message TEXT,
+  invited_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  accepted_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  expires_at INTEGER NOT NULL,
+  accepted_at INTEGER,
+  revoked_at INTEGER,
+  created_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
+  updated_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS user_invitations_token_hash_uniq ON user_invitations(token_hash);
+CREATE INDEX IF NOT EXISTS user_invitations_email_idx ON user_invitations(email);
+CREATE INDEX IF NOT EXISTS user_invitations_profile_idx ON user_invitations(profile_id);
+CREATE INDEX IF NOT EXISTS user_invitations_invited_by_idx ON user_invitations(invited_by_user_id);
+CREATE INDEX IF NOT EXISTS user_invitations_expires_idx ON user_invitations(expires_at);
+
+CREATE TABLE IF NOT EXISTS instance_settings (
+  id TEXT PRIMARY KEY,
+  global_mfa_enabled INTEGER NOT NULL DEFAULT 0,
+  updated_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
+);
+
+INSERT OR IGNORE INTO instance_settings (id, global_mfa_enabled)
+VALUES ('global', 0);
 
 CREATE TABLE IF NOT EXISTS profiles (
   id TEXT PRIMARY KEY,
@@ -30,6 +129,13 @@ CREATE TABLE IF NOT EXISTS profiles (
   created_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
   updated_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
 );
+
+CREATE TABLE IF NOT EXISTS user_profiles (
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE
+);
+CREATE UNIQUE INDEX IF NOT EXISTS user_profiles_uniq ON user_profiles(user_id, profile_id);
+CREATE INDEX IF NOT EXISTS user_profiles_profile_idx ON user_profiles(profile_id);
 
 CREATE TABLE IF NOT EXISTS backends (
   id TEXT PRIMARY KEY,
@@ -242,11 +348,32 @@ CREATE TABLE IF NOT EXISTS skills (
   updated_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
 );
 CREATE INDEX IF NOT EXISTS skills_profile_idx ON skills(profile_id);
+
+CREATE TABLE IF NOT EXISTS password_reset_tokens (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  token_hash TEXT NOT NULL UNIQUE,
+  expires_at INTEGER NOT NULL,
+  used_at INTEGER,
+  created_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS password_reset_tokens_token_hash_uniq ON password_reset_tokens(token_hash);
+CREATE INDEX IF NOT EXISTS password_reset_tokens_user_idx ON password_reset_tokens(user_id);
 `;
 
 // Columns added after initial release. SQLite lacks `ADD COLUMN IF NOT EXISTS`,
 // so we introspect PRAGMA and add missing ones.
 const COLUMN_MIGRATIONS: Record<string, Record<string, string>> = {
+  users: {
+    is_superadmin: 'INTEGER NOT NULL DEFAULT 0',
+    created_by_user_id: 'TEXT REFERENCES users(id) ON DELETE SET NULL',
+    mfa_enabled: 'INTEGER NOT NULL DEFAULT 0',
+    mfa_secret: 'TEXT',
+    mfa_enrolled_at: 'INTEGER'
+  },
+  sessions: {
+    is_mfa_complete: 'INTEGER NOT NULL DEFAULT 1'
+  },
   backends: {
     profile_id: 'TEXT REFERENCES profiles(id) ON DELETE SET NULL'
   },

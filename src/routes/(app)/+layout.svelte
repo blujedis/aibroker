@@ -7,7 +7,11 @@
 </script>
 
 <div class="flex h-screen overflow-hidden">
-  <Sidebar bind:collapsed onToggle={() => (collapsed = !collapsed)} />
+  <Sidebar
+    user={data.user}
+    bind:collapsed
+    onToggle={() => (collapsed = !collapsed)}
+  />
   <div class="flex flex-1 flex-col overflow-hidden">
     <Header user={data.user} />
     <main class="flex-1 overflow-y-auto bg-background px-6 py-6">

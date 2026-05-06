@@ -1,0 +1,91 @@
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { and, eq, gt, isNotNull, isNull, lt, or } from 'drizzle-orm';
+import { nanoid } from 'nanoid';
+import { db, schema } from '$lib/server/db/index.js';
+
+const DEFAULT_BREAK_GLASS_EXPIRY_MINUTES = 10;
+
+export function getBreakGlassExpiryMinutes(): number {
+  const value = Number(process.env.MFA_BREAK_GLASS_EXPIRY_MINUTES ?? DEFAULT_BREAK_GLASS_EXPIRY_MINUTES);
+  return Number.isFinite(value) && value > 0 ? value : DEFAULT_BREAK_GLASS_EXPIRY_MINUTES;
+}
+
+export function createBreakGlassTokenValue(): string {
+  return randomBytes(32).toString('hex');
+}
+
+export function hashBreakGlassToken(token: string): string {
+  return createHash('sha256').update(token).digest('hex');
+}
+
+export function createBreakGlassTokenForUser(userId: string): { token: string; expiresAt: Date } {
+  const token = createBreakGlassTokenValue();
+  const tokenHash = hashBreakGlassToken(token);
+  const expiresAt = new Date(Date.now() + getBreakGlassExpiryMinutes() * 60 * 1000);
+
+  db.delete(schema.mfaBreakGlassTokens)
+    .where(
+      or(
+        eq(schema.mfaBreakGlassTokens.userId, userId),
+        isNotNull(schema.mfaBreakGlassTokens.usedAt),
+        lt(schema.mfaBreakGlassTokens.expiresAt, new Date()),
+      )
+    )
+    .run();
+
+  db.insert(schema.mfaBreakGlassTokens)
+    .values({
+      id: nanoid(),
+      userId,
+      tokenHash,
+      expiresAt
+    })
+    .run();
+
+  return { token, expiresAt };
+}
+
+export function verifyBreakGlassToken(rawToken: string): string | null {
+  const tokenHash = hashBreakGlassToken(rawToken);
+  const row = db
+    .select({ userId: schema.mfaBreakGlassTokens.userId, tokenHash: schema.mfaBreakGlassTokens.tokenHash })
+    .from(schema.mfaBreakGlassTokens)
+    .where(
+      and(
+        eq(schema.mfaBreakGlassTokens.tokenHash, tokenHash),
+        isNull(schema.mfaBreakGlassTokens.usedAt),
+        gt(schema.mfaBreakGlassTokens.expiresAt, new Date())
+      )
+    )
+    .get();
+
+  if (!row) return null;
+
+  const expected = Buffer.from(tokenHash, 'hex');
+  const actual = Buffer.from(row.tokenHash, 'hex');
+  if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) return null;
+
+  return row.userId;
+}
+
+export function consumeBreakGlassToken(rawToken: string): void {
+  const tokenHash = hashBreakGlassToken(rawToken);
+  db.update(schema.mfaBreakGlassTokens)
+    .set({ usedAt: new Date() })
+    .where(eq(schema.mfaBreakGlassTokens.tokenHash, tokenHash))
+    .run();
+}
+
+export function disableMfaForUser(userId: string): void {
+  db.update(schema.users)
+    .set({
+      mfaEnabled: false,
+      mfaSecret: null,
+      mfaEnrolledAt: null,
+      updatedAt: new Date()
+    })
+    .where(eq(schema.users.id, userId))
+    .run();
+
+  db.delete(schema.mfaRecoveryCodes).where(eq(schema.mfaRecoveryCodes.userId, userId)).run();
+}

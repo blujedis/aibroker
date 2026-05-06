@@ -2,7 +2,7 @@
 
 An opinionated, OpenAI-compatible LLM proxy with profiles, virtual API keys, budgets, guardrails, MCP support, and a first-class dashboard.
 
-Built with **Node.js**, **TypeScript**, **SvelteKit 2 (Svelte 5 runes)**, **Tailwind CSS 4**, **shadcn-svelte-style** components, and **SQLite** via **drizzle-orm**.
+Built with **Node.js**, **TypeScript**, **SvelteKit 2 (Svelte 5 runes)**, **Tailwind CSS 4**, **shadcn-svelte-style** components, and **PostgreSQL** via **drizzle-orm**.
 
 ## Features
 
@@ -44,7 +44,12 @@ Override via env:
 BOOTSTRAP_ADMIN_EMAIL=you@example.com BOOTSTRAP_ADMIN_PASSWORD=changeme pnpm dev
 ```
 
-The SQLite DB is created automatically at `./data/aibroker.db` — no migrations to run.
+Run schema migrations before starting the app on a fresh environment:
+
+```bash
+pnpm db:migrate
+pnpm db:seed
+```
 
 ## Using the proxy
 
@@ -89,17 +94,50 @@ Behavior notes:
 |---|---|---|
 | `BOOTSTRAP_ADMIN_EMAIL` | `admin@local` | Created on first run if no users exist |
 | `BOOTSTRAP_ADMIN_PASSWORD` | `admin` | Password for the bootstrap user |
+| `SESSION_TTL` | `1h` | Session lifetime; supports `m`, `h`, `d`, `y` (e.g. `90m`, `12h`, `7d`, `1y`) |
+| `REFRESH_TOKEN_TTL` | `30d` | Refresh-token lifetime for silent re-authentication; supports `m`, `h`, `d`, `y` |
+| `MFA_BREAK_GLASS_EXPIRY_MINUTES` | `10` | Expiry window for emailed emergency MFA recovery links |
 | `MAX_CONCURRENT_UPSTREAM` | `32` | Max parallel upstream fetches across the whole server |
 | `SCOPE_OBSERVABILITY_LOGS` | `1` | Set to `0` to disable structured scope decision logs |
 
 ## Scripts
 
 ```bash
-pnpm dev      # dev server with HMR
-pnpm build    # production build (adapter-node)
-pnpm start    # run the built server
-pnpm check    # svelte-check / tsc
+pnpm dev         # dev server with HMR
+pnpm build       # production build (adapter-node)
+pnpm start       # run the built server
+pnpm check       # svelte-check / tsc
+pnpm test        # alias for unit tests (runs test:unit)
+pnpm test:unit   # vitest unit/action tests
+pnpm test:smoke  # runtime smoke flow checks (requires running dev server)
 ```
+
+## Testing
+
+- Unit tests:
+
+```bash
+pnpm test
+```
+
+- Smoke tests (run with a live app process):
+
+```bash
+pnpm dev
+pnpm test:smoke
+```
+
+Smoke tests exercise login/session/logout and protected-route access using bootstrap credentials from env (`BOOTSTRAP_ADMIN_EMAIL`, `BOOTSTRAP_ADMIN_PASSWORD`).
+
+- Build gating:
+
+`pnpm build` automatically runs `prebuild`, which executes:
+
+```bash
+pnpm check && pnpm run test:unit
+```
+
+Smoke tests are intentionally not part of `prebuild` because they depend on a running server and runtime environment.
 
 ## Layout
 

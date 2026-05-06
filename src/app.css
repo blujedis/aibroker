@@ -27,8 +27,9 @@
   --color-destructive: hsl(0 72% 51%);
   --color-destructive-foreground: hsl(210 40% 98%);
 
-  --color-success: hsl(142 70% 45%);
+  --color-success: oklch(59.6% 0.145 163.225);
   --color-warning: hsl(38 92% 50%);
+  --color-info: oklch(60.9% 0.126 221.723);
 
   --color-border: hsl(214.3 31.8% 91.4%);
   --color-input: hsl(214.3 31.8% 91.4%);

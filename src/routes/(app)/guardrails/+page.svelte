@@ -14,7 +14,7 @@
   } from "$lib/components/ui";
   import { enhance } from "$app/forms";
   import DateRangePicker from "$lib/components/date-range-picker.svelte";
-  import { Trash2, Pencil, X, Check } from "lucide-svelte";
+  import { Trash2, Pencil, X, Check } from "@lucide/svelte";
   import { fmtInt } from "$lib/utils";
 
   let { data } = $props();

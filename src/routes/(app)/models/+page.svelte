@@ -16,7 +16,7 @@
     ConfirmDialog,
     type ComboboxItem,
   } from "$lib/components/ui";
-  import { Trash2, Pencil, Plus } from "lucide-svelte";
+  import { Trash2, Pencil, Plus } from "@lucide/svelte";
 
   let { data, form } = $props();
 

@@ -14,7 +14,7 @@
   } from "$lib/components/ui";
   import { enhance } from "$app/forms";
   import { fmtCurrency, fmtDateTime } from "$lib/utils";
-  import { Trash2, Pencil, X, Check } from "lucide-svelte";
+  import { Trash2, Pencil, X, Check } from "@lucide/svelte";
 
   let { data } = $props();
   let editingId: string | null = $state(null);

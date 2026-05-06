@@ -1,9 +1,13 @@
-import { and, desc, eq, gte, lte, type SQL } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, lte, type SQL } from 'drizzle-orm';
 import { db, schema } from '$lib/server/db/index.js';
 import { resolveRange, type RangeKey } from '$lib/utils/date-range.js';
+import { getVisibleProfileIds, requireUser } from '$lib/server/authz.js';
 import type { PageServerLoad } from './$types';
 
-export const load: PageServerLoad = ({ url }) => {
+export const load: PageServerLoad = ({ url, locals }) => {
+  const actor = requireUser(locals.user);
+  const visibleProfileIds = getVisibleProfileIds(actor);
+
   const rangeKey = (url.searchParams.get('range') as RangeKey) ?? 'last7';
   const start = url.searchParams.get('start') ?? undefined;
   const end = url.searchParams.get('end') ?? undefined;
@@ -18,10 +22,41 @@ export const load: PageServerLoad = ({ url }) => {
     gte(schema.requestLogs.createdAt, range.start),
     lte(schema.requestLogs.createdAt, range.end)
   ];
-  if (profileId) conds.push(eq(schema.requestLogs.profileId, profileId));
+  if (profileId && visibleProfileIds === null) conds.push(eq(schema.requestLogs.profileId, profileId));
   if (vkeyId) conds.push(eq(schema.requestLogs.virtualKeyId, vkeyId));
   if (status === 'success' || status === 'failed' || status === 'blocked') {
     conds.push(eq(schema.requestLogs.status, status));
+  }
+
+  if (visibleProfileIds !== null) {
+    if (visibleProfileIds.length === 0) {
+      return {
+        logs: [],
+        profiles: [],
+        keys: [],
+        filters: { profileId, vkeyId, status, limit },
+        rangeKey,
+        start: start ?? '',
+        end: end ?? ''
+      };
+    }
+    if (profileId && !visibleProfileIds.includes(profileId)) {
+      return {
+        logs: [],
+        profiles: [],
+        keys: [],
+        filters: { profileId, vkeyId, status, limit },
+        rangeKey,
+        start: start ?? '',
+        end: end ?? ''
+      };
+    }
+
+    if (profileId) {
+      conds.push(eq(schema.requestLogs.profileId, profileId));
+    } else {
+      conds.push(inArray(schema.requestLogs.profileId, visibleProfileIds));
+    }
   }
 
   const logs = db
@@ -47,8 +82,30 @@ export const load: PageServerLoad = ({ url }) => {
     .limit(limit)
     .all();
 
-  const profiles = db.select().from(schema.profiles).all();
-  const keys = db.select().from(schema.virtualKeys).all();
+  const profiles =
+    visibleProfileIds === null
+      ? db.select().from(schema.profiles).all()
+      : db
+        .select()
+        .from(schema.profiles)
+        .where(
+          profileId
+            ? eq(schema.profiles.id, profileId)
+            : inArray(schema.profiles.id, visibleProfileIds)
+        )
+        .all();
+  const keys =
+    visibleProfileIds === null
+      ? db.select().from(schema.virtualKeys).all()
+      : db
+        .select()
+        .from(schema.virtualKeys)
+        .where(
+          profileId
+            ? eq(schema.virtualKeys.profileId, profileId)
+            : inArray(schema.virtualKeys.profileId, visibleProfileIds)
+        )
+        .all();
 
   return {
     logs,

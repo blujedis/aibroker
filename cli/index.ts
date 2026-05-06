@@ -1,8 +1,13 @@
 
 import { table } from 'table';
+import { createHash, randomBytes } from 'node:crypto';
+import { asc, eq, isNotNull, lt, or } from 'drizzle-orm';
 import { hashPasswordWithPepper, verifyPasswordWithPepper } from './hashpass';
 import clipboardy from 'clipboardy';
 import { parseModels } from './scraper-vercel';
+import { ensureSchema } from '../src/lib/server/db/bootstrap.js';
+import { buildMfaBreakGlassUrl, sendMfaBreakGlassEmail } from '../src/lib/server/mail/mailgun.js';
+import { db, schema } from '../src/lib/server/db/index.js';
 
 const args = process.argv.slice(2);
 const command = args[0];
@@ -17,6 +22,7 @@ function showHelp() {
   console.log('$    hash <password>          - Copies hashed password to clipboard.');
   console.log('$  verify <password> <hash>   - Verifies if password/hash are match.');
   console.log('$ pricing                     - Gets AI model pricing.');
+  console.log('$ break-glass                 - Sends superadmin a short-lived MFA recovery link.');
   console.log();
 }
 
@@ -63,6 +69,71 @@ async function verifyPassword(password: string, hash: string) {
   process.exit(0);
 }
 
+function getBreakGlassExpiryMinutes(): number {
+  const value = Number(process.env.MFA_BREAK_GLASS_EXPIRY_MINUTES ?? 10);
+  return Number.isFinite(value) && value > 0 ? value : 10;
+}
+
+function createBreakGlassTokenValue(): string {
+  return randomBytes(32).toString('hex');
+}
+
+function hashBreakGlassToken(token: string): string {
+  return createHash('sha256').update(token).digest('hex');
+}
+
+async function sendBreakGlassRecoveryEmail() {
+  ensureSchema();
+
+  const superadmin = db
+    .select({ id: schema.users.id, email: schema.users.email })
+    .from(schema.users)
+    .where(eq(schema.users.isSuperadmin, true))
+    .orderBy(asc(schema.users.createdAt))
+    .limit(1)
+    .get();
+
+  if (!superadmin) {
+    console.log('No superadmin account found. Cannot issue break-glass token.');
+    process.exit(1);
+  }
+
+  const expiryMinutes = getBreakGlassExpiryMinutes();
+  const token = createBreakGlassTokenValue();
+  const tokenHash = hashBreakGlassToken(token);
+  const expiresAt = new Date(Date.now() + expiryMinutes * 60 * 1000);
+
+  db.delete(schema.mfaBreakGlassTokens)
+    .where(
+      or(
+        eq(schema.mfaBreakGlassTokens.userId, superadmin.id),
+        isNotNull(schema.mfaBreakGlassTokens.usedAt),
+        lt(schema.mfaBreakGlassTokens.expiresAt, new Date())
+      )
+    )
+    .run();
+
+  db.insert(schema.mfaBreakGlassTokens)
+    .values({
+      id: randomBytes(12).toString('hex'),
+      userId: superadmin.id,
+      tokenHash,
+      expiresAt
+    })
+    .run();
+
+  const breakGlassUrl = buildMfaBreakGlassUrl(token);
+
+  await sendMfaBreakGlassEmail({
+    to: superadmin.email,
+    breakGlassUrl,
+    expiresInMinutes: expiryMinutes
+  });
+
+  console.log(`Break-glass email sent to ${superadmin.email}. Expires in ${expiryMinutes} minutes.`);
+  process.exit(0);
+}
+
 if (command === 'help') {
   showHelp();
 }
@@ -74,6 +145,9 @@ else if (command === 'verify') {
 }
 else if (command === 'models') {
   parseModels();
+}
+else if (command === 'break-glass') {
+  sendBreakGlassRecoveryEmail();
 }
 else {
   console.log('Command -', command, 'is unknown.\n');

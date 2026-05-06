@@ -1,13 +1,13 @@
 /// <reference types="node" />
 
-import { defineConfig, type Config } from 'drizzle-kit';
+import { type Config, defineConfig } from 'drizzle-kit';
 
 const config: Config = {
   schema: './src/lib/server/db/schema.ts',
   out: './drizzle',
-  dialect: process.env.DATABASE_DIALECT as Config['dialect'] ?? 'sqlite',
+  dialect: 'postgresql',
   dbCredentials: {
-    url: process.env.DATABASE_URL ?? 'file:./data/aibroker.db'
+    url: process.env.DATABASE_URL ?? 'postgresql://postgres:postgres@localhost:5432/aibroker'
   }
 };
 

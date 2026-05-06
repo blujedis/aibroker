@@ -1,3 +1,4 @@
+import { redirect } from '@sveltejs/kit';
 import type { PageServerLoad } from './$types';
 import { resolveRange, type RangeKey } from '$lib/utils/date-range.js';
 import {
@@ -8,7 +9,9 @@ import {
   usageSummary
 } from '$lib/server/stats.js';
 
-export const load: PageServerLoad = ({ url }) => {
+export const load: PageServerLoad = ({ url, locals }) => {
+  if (locals.user?.role !== 'admin') throw redirect(303, '/profiles');
+
   const rangeKey = (url.searchParams.get('range') as RangeKey) ?? 'last7';
   const start = url.searchParams.get('start') ?? undefined;
   const end = url.searchParams.get('end') ?? undefined;

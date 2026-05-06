@@ -1,17 +1,25 @@
 import { fail, type Actions } from '@sveltejs/kit';
-import { eq } from 'drizzle-orm';
+import { eq, inArray, isNull, or } from 'drizzle-orm';
 import { nanoid } from 'nanoid';
 import { db, schema } from '$lib/server/db/index.js';
 import { filterEligibleModels } from '$lib/server/scope.js';
 import { logScopeEvent } from '$lib/server/observability/scope.js';
+import {
+  assertCanAccessProfile,
+  getVisibleProfileIds,
+  requireUser
+} from '$lib/server/authz.js';
 import type { PageServerLoad } from './$types';
 
 function generateToken(): string {
   return 'ab-' + nanoid(40);
 }
 
-export const load: PageServerLoad = () => {
-  const rows = db
+export const load: PageServerLoad = ({ locals }) => {
+  const actor = requireUser(locals.user);
+  const visibleProfileIds = getVisibleProfileIds(actor);
+
+  const rowsQuery = db
     .select({
       id: schema.virtualKeys.id,
       name: schema.virtualKeys.name,
@@ -24,19 +32,45 @@ export const load: PageServerLoad = () => {
       createdAt: schema.virtualKeys.createdAt
     })
     .from(schema.virtualKeys)
-    .leftJoin(schema.profiles, eq(schema.profiles.id, schema.virtualKeys.profileId))
-    .all();
+    .leftJoin(schema.profiles, eq(schema.profiles.id, schema.virtualKeys.profileId));
 
-  const profiles = db.select().from(schema.profiles).all();
-  const models = db
+  const rows =
+    visibleProfileIds === null
+      ? rowsQuery.all()
+      : visibleProfileIds.length === 0
+        ? []
+        : rowsQuery.where(inArray(schema.virtualKeys.profileId, visibleProfileIds)).all();
+
+  const profiles =
+    visibleProfileIds === null
+      ? db.select().from(schema.profiles).all()
+      : visibleProfileIds.length === 0
+        ? []
+        : db.select().from(schema.profiles).where(inArray(schema.profiles.id, visibleProfileIds)).all();
+
+  const modelsQuery = db
     .select()
     .from(schema.models)
-    .leftJoin(schema.backends, eq(schema.backends.id, schema.models.backendId))
-    .all()
-    .map((row) => ({
-      ...row.models,
-      backendProfileId: row.backends?.profileId ?? null
-    }));
+    .leftJoin(schema.backends, eq(schema.backends.id, schema.models.backendId));
+
+  const modelRows =
+    visibleProfileIds === null
+      ? modelsQuery.all()
+      : visibleProfileIds.length === 0
+        ? []
+        : modelsQuery
+          .where(
+            or(
+              isNull(schema.backends.profileId),
+              inArray(schema.backends.profileId, visibleProfileIds)
+            )
+          )
+          .all();
+
+  const models = modelRows.map((row) => ({
+    ...row.models,
+    backendProfileId: row.backends?.profileId ?? null
+  }));
 
   // gather allowed model ids per key
   const allowed = db.select().from(schema.virtualKeyModels).all();
@@ -66,11 +100,13 @@ function parseFreq(v: FormDataEntryValue | null): 'daily' | 'weekly' | 'monthly'
 }
 
 export const actions: Actions = {
-  create: async ({ request }) => {
+  create: async ({ request, locals }) => {
+    const actor = requireUser(locals.user);
     const form = await request.formData();
     const name = String(form.get('name') ?? '').trim();
     const profileId = String(form.get('profileId') ?? '');
     if (!name || !profileId) return fail(400, { error: 'Name and profile are required' });
+    assertCanAccessProfile(actor, profileId);
 
     const id = nanoid();
     const token = generateToken();
@@ -122,12 +158,23 @@ export const actions: Actions = {
       ...(ineligibleCount > 0 && { warning: `${ineligibleCount} model(s) were excluded due to profile scope mismatch` })
     };
   },
-  update: async ({ request }) => {
+  update: async ({ request, locals }) => {
+    const actor = requireUser(locals.user);
     const form = await request.formData();
     const id = String(form.get('id') ?? '');
     if (!id) return fail(400, { error: 'Missing id' });
 
+    const existing = db
+      .select({ profileId: schema.virtualKeys.profileId })
+      .from(schema.virtualKeys)
+      .where(eq(schema.virtualKeys.id, id))
+      .get();
+
+    if (!existing) return fail(404, { error: 'Virtual key not found' });
+    assertCanAccessProfile(actor, existing.profileId);
+
     const profileId = String(form.get('profileId') ?? '');
+    assertCanAccessProfile(actor, profileId);
     db.update(schema.virtualKeys)
       .set({
         name: String(form.get('name') ?? '').trim(),
@@ -179,10 +226,20 @@ export const actions: Actions = {
       ...(ineligibleCount > 0 && { warning: `${ineligibleCount} model(s) were excluded due to profile scope mismatch` })
     };
   },
-  rotate: async ({ request }) => {
+  rotate: async ({ request, locals }) => {
+    const actor = requireUser(locals.user);
     const form = await request.formData();
     const id = String(form.get('id') ?? '');
     if (!id) return fail(400, { error: 'Missing id' });
+
+    const existing = db
+      .select({ profileId: schema.virtualKeys.profileId })
+      .from(schema.virtualKeys)
+      .where(eq(schema.virtualKeys.id, id))
+      .get();
+    if (!existing) return fail(404, { error: 'Virtual key not found' });
+    assertCanAccessProfile(actor, existing.profileId);
+
     const token = generateToken();
     db.update(schema.virtualKeys)
       .set({ token, updatedAt: new Date() })
@@ -190,10 +247,20 @@ export const actions: Actions = {
       .run();
     return { ok: true, rotatedToken: token };
   },
-  delete: async ({ request }) => {
+  delete: async ({ request, locals }) => {
+    const actor = requireUser(locals.user);
     const form = await request.formData();
     const id = String(form.get('id') ?? '');
     if (!id) return fail(400, { error: 'Missing id' });
+
+    const existing = db
+      .select({ profileId: schema.virtualKeys.profileId })
+      .from(schema.virtualKeys)
+      .where(eq(schema.virtualKeys.id, id))
+      .get();
+    if (!existing) return fail(404, { error: 'Virtual key not found' });
+    assertCanAccessProfile(actor, existing.profileId);
+
     db.delete(schema.virtualKeys).where(eq(schema.virtualKeys.id, id)).run();
     return { ok: true };
   }

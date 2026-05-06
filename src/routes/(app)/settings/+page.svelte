@@ -8,7 +8,7 @@
     Label,
   } from "$lib/components/ui";
   import { enhance } from "$app/forms";
-  import { Upload } from "lucide-svelte";
+  import { Upload } from "@lucide/svelte";
 
   let { data, form } = $props();
 </script>
@@ -22,6 +22,49 @@
       System-wide configuration and maintenance.
     </p>
   </div>
+
+  <Card>
+    <CardHeader
+      title="Authentication"
+      description="Superadmin controls for instance-wide MFA enforcement"
+    />
+    <CardContent>
+      <div class="space-y-3">
+        <p class="text-sm text-muted-foreground">
+          Global MFA status:
+          <strong
+            >{data.settings.globalMfaEnabled ? "Enabled" : "Disabled"}</strong
+          >
+        </p>
+        {#if data.user?.isSuperadmin}
+          <form
+            method="POST"
+            action="?/setGlobalMfa"
+            use:enhance
+            class="flex items-center gap-3"
+          >
+            <label class="flex items-center gap-2 text-sm">
+              <Input
+                type="checkbox"
+                name="enabled"
+                checked={data.settings.globalMfaEnabled}
+              />
+              Require MFA for all users
+            </label>
+            <Button type="submit" variant="secondary">Save MFA setting</Button>
+          </form>
+          <p class="text-xs text-muted-foreground">
+            Enabling this requires MFA enrollment and verification for all users
+            at next login.
+          </p>
+        {:else}
+          <p class="text-xs text-muted-foreground">
+            Only the superadmin can change this setting.
+          </p>
+        {/if}
+      </div>
+    </CardContent>
+  </Card>
 
   <Card>
     <CardHeader
@@ -53,6 +96,34 @@
             BOOTSTRAP_ADMIN_EMAIL
           </dt>
           <dd class="font-mono">{data.env.BOOTSTRAP_ADMIN_EMAIL}</dd>
+        </div>
+        <div>
+          <dt class="text-xs uppercase text-muted-foreground">SESSION_TTL</dt>
+          <dd class="font-mono">{data.env.SESSION_TTL}</dd>
+        </div>
+        <div>
+          <dt class="text-xs uppercase text-muted-foreground">
+            DATABASE_DIALECT
+          </dt>
+          <dd class="font-mono">{data.env.DATABASE_DIALECT}</dd>
+        </div>
+        <div>
+          <dt class="text-xs uppercase text-muted-foreground">
+            INVITE_EXPIRY_HOURS
+          </dt>
+          <dd class="font-mono">{data.env.INVITE_EXPIRY_HOURS}</dd>
+        </div>
+        <div>
+          <dt class="text-xs uppercase text-muted-foreground">
+            MAILGUN_DOMAIN
+          </dt>
+          <dd class="font-mono">{data.env.MAILGUN_DOMAIN}</dd>
+        </div>
+        <div>
+          <dt class="text-xs uppercase text-muted-foreground">
+            MAILGUN_FROM_EMAIL
+          </dt>
+          <dd class="font-mono">{data.env.MAILGUN_FROM_EMAIL}</dd>
         </div>
       </dl>
     </CardContent>

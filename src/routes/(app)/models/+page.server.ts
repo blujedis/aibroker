@@ -1,8 +1,13 @@
 import { fail, type Actions } from '@sveltejs/kit';
-import { asc, eq } from 'drizzle-orm';
+import { asc, eq, inArray } from 'drizzle-orm';
 import { nanoid } from 'nanoid';
 import { db, schema } from '$lib/server/db/index.js';
 import { encryptSecret, isEncryptedSecret } from '$lib/server/secrets.js';
+import {
+  assertCanAccessProfile,
+  getVisibleProfileIds,
+  requireUser
+} from '$lib/server/authz.js';
 import type { PageServerLoad } from './$types';
 
 const BOOL_FIELDS = [
@@ -105,26 +110,49 @@ function sanitizeBackendsForClient() {
   return backends.map(({ apiKey: _apiKey, ...backend }) => backend);
 }
 
-export const load: PageServerLoad = () => {
-  const backends = sanitizeBackendsForClient();
+export const load: PageServerLoad = ({ locals }) => {
+  const actor = requireUser(locals.user);
+  const visibleProfileIds = getVisibleProfileIds(actor);
 
-  const models = db
+  const backends =
+    visibleProfileIds === null
+      ? sanitizeBackendsForClient()
+      : sanitizeBackendsForClient().filter((backend) =>
+        backend.profileId ? visibleProfileIds.includes(backend.profileId) : false
+      );
+
+  const modelsQuery = db
     .select()
     .from(schema.models)
-    .leftJoin(schema.backends, eq(schema.backends.id, schema.models.backendId))
-    .orderBy(asc(schema.models.publicId))
-    .all()
-    .map((row) => ({
-      ...row.models,
-      backendName: row.backends?.name ?? null,
-      backendProfileId: row.backends?.profileId ?? null
-    }));
+    .leftJoin(schema.backends, eq(schema.backends.id, schema.models.backendId));
 
-  const profiles = db
-    .select()
-    .from(schema.profiles)
-    .orderBy(asc(schema.profiles.name))
-    .all();
+  const modelRows =
+    visibleProfileIds === null
+      ? modelsQuery.orderBy(asc(schema.models.publicId)).all()
+      : visibleProfileIds.length === 0
+        ? []
+        : modelsQuery
+          .where(inArray(schema.backends.profileId, visibleProfileIds))
+          .orderBy(asc(schema.models.publicId))
+          .all();
+
+  const models = modelRows.map((row) => ({
+    ...row.models,
+    backendName: row.backends?.name ?? null,
+    backendProfileId: row.backends?.profileId ?? null
+  }));
+
+  const profiles =
+    visibleProfileIds === null
+      ? db.select().from(schema.profiles).orderBy(asc(schema.profiles.name)).all()
+      : visibleProfileIds.length === 0
+        ? []
+        : db
+          .select()
+          .from(schema.profiles)
+          .where(inArray(schema.profiles.id, visibleProfileIds))
+          .orderBy(asc(schema.profiles.name))
+          .all();
 
   const accessibleProviders = db
     .select()
@@ -149,7 +177,8 @@ export const load: PageServerLoad = () => {
 };
 
 export const actions: Actions = {
-  backendCreate: async ({ request }) => {
+  backendCreate: async ({ request, locals }) => {
+    const actor = requireUser(locals.user);
     const form = await request.formData();
     const name = str(form.get('name'));
     const baseUrl = str(form.get('baseUrl'));
@@ -158,6 +187,10 @@ export const actions: Actions = {
     const profileId = str(form.get('profileId')) || null;
 
     if (!name || !baseUrl || !apiKey) return fail(400, { error: 'name, baseUrl, apiKey required' });
+    if (actor.role !== 'admin' && !profileId) {
+      return fail(400, { error: 'Managers must choose a profile-scoped backend' });
+    }
+    assertCanAccessProfile(actor, profileId);
 
     // Validate profile exists if provided
     if (profileId) {
@@ -178,18 +211,31 @@ export const actions: Actions = {
       .run();
     return { ok: true };
   },
-  backendUpdate: async ({ request }) => {
+  backendUpdate: async ({ request, locals }) => {
+    const actor = requireUser(locals.user);
     const form = await request.formData();
     const id = str(form.get('id'));
     if (!id) return fail(400, { error: 'Missing id' });
     const nextApiKey = str(form.get('apiKey'));
     const profileId = str(form.get('profileId')) || null;
 
+    const existing = db
+      .select({ profileId: schema.backends.profileId })
+      .from(schema.backends)
+      .where(eq(schema.backends.id, id))
+      .get();
+    if (!existing) return fail(404, { error: 'Backend not found' });
+    assertCanAccessProfile(actor, existing.profileId);
+
     // Validate profile exists if provided
     if (profileId) {
       const profile = db.query.profiles.findFirst({ where: eq(schema.profiles.id, profileId) });
       if (!profile) return fail(400, { error: 'Profile not found' });
     }
+    if (actor.role !== 'admin' && !profileId) {
+      return fail(400, { error: 'Managers must keep backends profile-scoped' });
+    }
+    assertCanAccessProfile(actor, profileId);
 
     const backendPatch: {
       name: string;
@@ -212,13 +258,24 @@ export const actions: Actions = {
     db.update(schema.backends).set(backendPatch).where(eq(schema.backends.id, id)).run();
     return { ok: true };
   },
-  backendDelete: async ({ request }) => {
+  backendDelete: async ({ request, locals }) => {
+    const actor = requireUser(locals.user);
     const form = await request.formData();
     const id = str(form.get('id'));
+
+    const existing = db
+      .select({ profileId: schema.backends.profileId })
+      .from(schema.backends)
+      .where(eq(schema.backends.id, id))
+      .get();
+    if (!existing) return fail(404, { error: 'Backend not found' });
+    assertCanAccessProfile(actor, existing.profileId);
+
     db.delete(schema.backends).where(eq(schema.backends.id, id)).run();
     return { ok: true };
   },
-  modelCreate: async ({ request }) => {
+  modelCreate: async ({ request, locals }) => {
+    const actor = requireUser(locals.user);
     const form = await request.formData();
     const publicId = str(form.get('publicId'));
     const displayName = str(form.get('displayName'));
@@ -226,6 +283,15 @@ export const actions: Actions = {
     const upstreamId = str(form.get('upstreamId'));
     if (!publicId || !backendId || !upstreamId)
       return fail(400, { error: 'publicId, backendId, upstreamId required' });
+
+    const backend = db
+      .select({ profileId: schema.backends.profileId })
+      .from(schema.backends)
+      .where(eq(schema.backends.id, backendId))
+      .get();
+    if (!backend) return fail(400, { error: 'Backend not found' });
+    assertCanAccessProfile(actor, backend.profileId);
+
     const extras = buildModelValues(form);
     db.insert(schema.models)
       .values({
@@ -243,16 +309,36 @@ export const actions: Actions = {
       .run();
     return { ok: true };
   },
-  modelUpdate: async ({ request }) => {
+  modelUpdate: async ({ request, locals }) => {
+    const actor = requireUser(locals.user);
     const form = await request.formData();
     const id = str(form.get('id'));
     if (!id) return fail(400, { error: 'Missing id' });
+
+    const existing = db
+      .select({ profileId: schema.backends.profileId })
+      .from(schema.models)
+      .leftJoin(schema.backends, eq(schema.backends.id, schema.models.backendId))
+      .where(eq(schema.models.id, id))
+      .get();
+    if (!existing) return fail(404, { error: 'Model not found' });
+    assertCanAccessProfile(actor, existing.profileId ?? null);
+
+    const backendId = str(form.get('backendId'));
+    const targetBackend = db
+      .select({ profileId: schema.backends.profileId })
+      .from(schema.backends)
+      .where(eq(schema.backends.id, backendId))
+      .get();
+    if (!targetBackend) return fail(400, { error: 'Backend not found' });
+    assertCanAccessProfile(actor, targetBackend.profileId);
+
     const extras = buildModelValues(form);
     db.update(schema.models)
       .set({
         publicId: str(form.get('publicId')),
         displayName: str(form.get('displayName')),
-        backendId: str(form.get('backendId')),
+        backendId,
         upstreamId: str(form.get('upstreamId')),
         ...extras,
         updatedAt: new Date()
@@ -261,9 +347,20 @@ export const actions: Actions = {
       .run();
     return { ok: true };
   },
-  modelDelete: async ({ request }) => {
+  modelDelete: async ({ request, locals }) => {
+    const actor = requireUser(locals.user);
     const form = await request.formData();
     const id = str(form.get('id'));
+
+    const existing = db
+      .select({ profileId: schema.backends.profileId })
+      .from(schema.models)
+      .leftJoin(schema.backends, eq(schema.backends.id, schema.models.backendId))
+      .where(eq(schema.models.id, id))
+      .get();
+    if (!existing) return fail(404, { error: 'Model not found' });
+    assertCanAccessProfile(actor, existing.profileId ?? null);
+
     db.delete(schema.models).where(eq(schema.models.id, id)).run();
     return { ok: true };
   }

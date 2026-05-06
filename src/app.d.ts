@@ -1,9 +1,10 @@
-import type { SessionUser } from '$lib/server/auth/session';
+import type { SessionUser } from "$lib/server/auth/session";
 
 declare global {
   namespace App {
     interface Locals {
       user: SessionUser | null;
+      pendingUser: SessionUser | null;
       sessionId: string | null;
     }
     interface PageData {
@@ -14,4 +15,5 @@ declare global {
   }
 }
 
+// biome-ignore lint/complexity/noUselessEmptyExport: needed to mark as module
 export { };

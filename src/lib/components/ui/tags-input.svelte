@@ -4,7 +4,7 @@
   // parent receives the tag list via bound `value` and can also bind the
   // serialized JSON through `jsonValue` for easy form submission.
   import { cn } from "$lib/utils";
-  import { X } from "lucide-svelte";
+  import { X } from "@lucide/svelte";
 
   interface Props {
     value?: string[];

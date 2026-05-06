@@ -3,15 +3,25 @@ import { eq } from 'drizzle-orm';
 import { db, schema } from '$lib/server/db/index.js';
 import { verifyPassword } from '$lib/server/auth/password.js';
 import {
+  createRefreshToken,
   createSession,
-  setSessionCookie,
-  SESSION_COOKIE
+  setRefreshTokenCookie,
+  setSessionCookie
 } from '$lib/server/auth/session.js';
+import {
+  getPostLoginDestination,
+  shouldMarkSessionMfaComplete
+} from '$lib/server/auth/login-flow.js';
+import { getGlobalSettings } from '$lib/server/settings.js';
+import { isGoogleConfigured } from '$lib/server/auth/oauth/google.js';
 import type { PageServerLoad } from './$types';
 
 export const load: PageServerLoad = ({ locals }) => {
   if (locals.user) throw redirect(303, '/dashboard');
-  return {};
+  if (locals.pendingUser) {
+    throw redirect(303, locals.pendingUser.mfaEnabled ? '/mfa/verify' : '/mfa/setup');
+  }
+  return { googleEnabled: isGoogleConfigured() };
 };
 
 export const actions: Actions = {
@@ -29,9 +39,23 @@ export const actions: Actions = {
     const ok = await verifyPassword(user.passwordHash, password);
     if (!ok) return fail(401, { email, error: 'Invalid credentials' });
 
-    const sid = await createSession(user.id);
+    const { globalMfaEnabled } = getGlobalSettings();
+    const userMfaEnabled = Boolean(user.mfaEnabled);
+    const destination = getPostLoginDestination({
+      globalMfaEnabled,
+      userMfaEnabled
+    });
+
+    const isMfaComplete = shouldMarkSessionMfaComplete({ globalMfaEnabled, userMfaEnabled });
+
+    const sid = await createSession(user.id, {
+      isMfaComplete
+    });
+    const refreshToken = createRefreshToken(user.id, { isMfaComplete });
+
     setSessionCookie(cookies, sid);
-    cookies.set(SESSION_COOKIE, sid, { path: '/' });
-    throw redirect(303, '/dashboard');
+    setRefreshTokenCookie(cookies, refreshToken);
+
+    throw redirect(303, destination);
   }
 };

@@ -9,7 +9,7 @@
 
 <script lang="ts">
   import { cn } from "$lib/utils";
-  import { ChevronsUpDown, Check, X } from "lucide-svelte";
+  import { ChevronsUpDown, Check, X } from "@lucide/svelte";
 
   interface Props {
     items: ComboboxItem[];

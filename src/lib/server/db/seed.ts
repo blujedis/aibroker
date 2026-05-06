@@ -19,7 +19,8 @@ export async function bootstrapAdminIfNeeded(): Promise<void> {
       email,
       name: 'Administrator',
       passwordHash,
-      role: 'admin'
+      role: 'admin',
+      isSuperadmin: true
     })
     .run();
 

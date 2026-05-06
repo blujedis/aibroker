@@ -12,3 +12,4 @@ export { default as Combobox } from './combobox.svelte';
 export type { ComboboxItem } from './combobox.svelte';
 export { default as TagsInput } from './tags-input.svelte';
 export { default as ConfirmDialog } from './confirm-dialog.svelte';
+export { default as SegmentSwitcher } from './segment-switcher.svelte';

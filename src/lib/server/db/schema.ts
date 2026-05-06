@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm';
 import {
+  type AnySQLiteColumn,
   integer,
   real,
   sqliteTable,
@@ -25,10 +26,25 @@ export const users = sqliteTable('users', {
   email: text('email').notNull().unique(),
   name: text('name').notNull(),
   passwordHash: text('password_hash').notNull(),
-  role: text('role', { enum: ['admin', 'operator'] })
+  role: text('role', { enum: ['admin', 'manager', 'operator'] })
     .notNull()
     .default('operator'),
+  isSuperadmin: integer('is_superadmin', { mode: 'boolean' }).notNull().default(false),
+  createdByUserId: text('created_by_user_id').references((): AnySQLiteColumn => users.id, {
+    onDelete: 'set null'
+  }),
+  mfaEnabled: integer('mfa_enabled', { mode: 'boolean' }).notNull().default(false),
+  mfaSecret: text('mfa_secret'),
+  mfaEnrolledAt: integer('mfa_enrolled_at', { mode: 'timestamp_ms' }),
   ...timestamps
+});
+
+export const instanceSettings = sqliteTable('instance_settings', {
+  id: text('id').primaryKey().default('global'),
+  globalMfaEnabled: integer('global_mfa_enabled', { mode: 'boolean' }).notNull().default(false),
+  updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
+    .notNull()
+    .default(sql`(unixepoch() * 1000)`)
 });
 
 export const sessions = sqliteTable(
@@ -39,11 +55,171 @@ export const sessions = sqliteTable(
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
     expiresAt: integer('expires_at', { mode: 'timestamp_ms' }).notNull(),
+    isMfaComplete: integer('is_mfa_complete', { mode: 'boolean' }).notNull().default(true),
     createdAt: integer('created_at', { mode: 'timestamp_ms' })
       .notNull()
       .default(sql`(unixepoch() * 1000)`)
   },
   (t) => [index('sessions_user_idx').on(t.userId)]
+);
+
+export const refreshTokens = sqliteTable(
+  'refresh_tokens',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    tokenHash: text('token_hash').notNull(),
+    expiresAt: integer('expires_at', { mode: 'timestamp_ms' }).notNull(),
+    isMfaComplete: integer('is_mfa_complete', { mode: 'boolean' }).notNull().default(true),
+    revokedAt: integer('revoked_at', { mode: 'timestamp_ms' }),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`)
+  },
+  (t) => [
+    uniqueIndex('refresh_tokens_token_hash_uniq').on(t.tokenHash),
+    index('refresh_tokens_user_idx').on(t.userId),
+    index('refresh_tokens_expires_idx').on(t.expiresAt)
+  ]
+);
+
+export const passwordResetTokens = sqliteTable(
+  'password_reset_tokens',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    tokenHash: text('token_hash').notNull(),
+    expiresAt: integer('expires_at', { mode: 'timestamp_ms' }).notNull(),
+    usedAt: integer('used_at', { mode: 'timestamp_ms' }),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`)
+  },
+  (t) => [
+    uniqueIndex('password_reset_tokens_token_hash_uniq').on(t.tokenHash),
+    index('password_reset_tokens_user_idx').on(t.userId)
+  ]
+);
+
+export const mfaRecoveryCodes = sqliteTable(
+  'mfa_recovery_codes',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    codeHash: text('code_hash').notNull(),
+    usedAt: integer('used_at', { mode: 'timestamp_ms' }),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`)
+  },
+  (t) => [
+    uniqueIndex('mfa_recovery_codes_code_hash_uniq').on(t.codeHash),
+    index('mfa_recovery_codes_user_idx').on(t.userId),
+    index('mfa_recovery_codes_used_idx').on(t.usedAt)
+  ]
+);
+
+export const mfaBreakGlassTokens = sqliteTable(
+  'mfa_break_glass_tokens',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    tokenHash: text('token_hash').notNull(),
+    expiresAt: integer('expires_at', { mode: 'timestamp_ms' }).notNull(),
+    usedAt: integer('used_at', { mode: 'timestamp_ms' }),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`)
+  },
+  (t) => [
+    uniqueIndex('mfa_break_glass_tokens_token_hash_uniq').on(t.tokenHash),
+    index('mfa_break_glass_tokens_user_idx').on(t.userId),
+    index('mfa_break_glass_tokens_expires_idx').on(t.expiresAt)
+  ]
+);
+
+export const userIdentities = sqliteTable(
+  'user_identities',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    provider: text('provider').notNull(), // 'google', etc.
+    providerUserId: text('provider_user_id').notNull(),
+    providerEmail: text('provider_email'),
+    linkedAt: integer('linked_at', { mode: 'timestamp_ms' }).notNull(),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`)
+  },
+  (t) => [
+    uniqueIndex('user_identities_provider_user_uniq').on(t.provider, t.providerUserId),
+    uniqueIndex('user_identities_user_provider_uniq').on(t.userId, t.provider),
+    index('user_identities_user_idx').on(t.userId)
+  ]
+);
+
+export const oauthStates = sqliteTable(
+  'oauth_states',
+  {
+    id: text('id').primaryKey(),
+    state: text('state').notNull(),
+    codeVerifier: text('code_verifier').notNull(),
+    provider: text('provider').notNull(),
+    intent: text('intent', { enum: ['login', 'link'] })
+      .notNull()
+      .default('login'),
+    actorUserId: text('actor_user_id'),
+    expiresAt: integer('expires_at', { mode: 'timestamp_ms' }).notNull(),
+    consumedAt: integer('consumed_at', { mode: 'timestamp_ms' }),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`)
+  },
+  (t) => [
+    uniqueIndex('oauth_states_state_uniq').on(t.state),
+    index('oauth_states_expires_idx').on(t.expiresAt)
+  ]
+);
+
+export const userInvitations = sqliteTable(
+  'user_invitations',
+  {
+    id: text('id').primaryKey(),
+    email: text('email').notNull(),
+    role: text('role', { enum: ['admin', 'manager', 'operator'] }).notNull(),
+    profileId: text('profile_id')
+      .notNull()
+      .references(() => profiles.id, { onDelete: 'cascade' }),
+    tokenHash: text('token_hash').notNull(),
+    customMessage: text('custom_message'),
+    invitedByUserId: text('invited_by_user_id')
+      .notNull()
+      .references((): AnySQLiteColumn => users.id, { onDelete: 'cascade' }),
+    acceptedByUserId: text('accepted_by_user_id').references((): AnySQLiteColumn => users.id, {
+      onDelete: 'set null'
+    }),
+    expiresAt: integer('expires_at', { mode: 'timestamp_ms' }).notNull(),
+    acceptedAt: integer('accepted_at', { mode: 'timestamp_ms' }),
+    revokedAt: integer('revoked_at', { mode: 'timestamp_ms' }),
+    ...timestamps
+  },
+  (t) => [
+    uniqueIndex('user_invitations_token_hash_uniq').on(t.tokenHash),
+    index('user_invitations_email_idx').on(t.email),
+    index('user_invitations_profile_idx').on(t.profileId),
+    index('user_invitations_invited_by_idx').on(t.invitedByUserId),
+    index('user_invitations_expires_idx').on(t.expiresAt)
+  ]
 );
 
 // ────────────────────────────────────────────────────────────────
@@ -187,6 +363,22 @@ export const profiles = sqliteTable('profiles', {
   enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
   ...timestamps
 });
+
+export const userProfiles = sqliteTable(
+  'user_profiles',
+  {
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    profileId: text('profile_id')
+      .notNull()
+      .references(() => profiles.id, { onDelete: 'cascade' })
+  },
+  (t) => [
+    uniqueIndex('user_profiles_uniq').on(t.userId, t.profileId),
+    index('user_profiles_profile_idx').on(t.profileId)
+  ]
+);
 
 export const virtualKeys = sqliteTable(
   'virtual_keys',
@@ -381,7 +573,10 @@ export const skills = sqliteTable(
 // ────────────────────────────────────────────────────────────────
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
+export type UserProfile = typeof userProfiles.$inferSelect;
+export type InstanceSettings = typeof instanceSettings.$inferSelect;
 export type Session = typeof sessions.$inferSelect;
+export type UserInvitation = typeof userInvitations.$inferSelect;
 export type Backend = typeof backends.$inferSelect;
 export type Model = typeof models.$inferSelect;
 export type AccessibleProvider = typeof accessibleProviders.$inferSelect;

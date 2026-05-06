@@ -29,7 +29,7 @@ export const GET: RequestHandler = async ({ params, url, locals }) => {
     if (!isGoogleConfigured()) {
       throw error(503, 'Google OAuth is not configured');
     }
-    const { state, codeVerifier } = createOAuthState(provider, intent, actorUserId);
+    const { state, codeVerifier } = await createOAuthState(provider, intent, actorUserId);
     const authUrl = await getGoogleAuthUrl(state, codeVerifier);
     throw redirect(303, authUrl.toString());
   }

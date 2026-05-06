@@ -9,7 +9,7 @@ import {
   usageSummary
 } from '$lib/server/stats.js';
 
-export const load: PageServerLoad = ({ url, locals }) => {
+export const load: PageServerLoad = async ({ url, locals }) => {
   if (locals.user?.role !== 'admin') throw redirect(303, '/profiles');
 
   const rangeKey = (url.searchParams.get('range') as RangeKey) ?? 'last7';
@@ -21,10 +21,10 @@ export const load: PageServerLoad = ({ url, locals }) => {
     rangeKey,
     start: start ?? '',
     end: end ?? '',
-    summary: usageSummary(range),
-    series: usageSeries(range),
-    byModel: usageByModel(range),
-    guardrailSummary: guardrailSummary(range),
-    guardrailSeries: guardrailSeries(range)
+    summary: await usageSummary(range),
+    series: await usageSeries(range),
+    byModel: await usageByModel(range),
+    guardrailSummary: await guardrailSummary(range),
+    guardrailSeries: await guardrailSeries(range)
   };
 };

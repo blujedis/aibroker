@@ -7,11 +7,9 @@ import {
 	setSessionCookie,
 	startReapScheduler,
 } from '$lib/server/auth/session.js';
-import { ensureSchema } from '$lib/server/db/bootstrap.js';
 import { ensureAdmin } from '$lib/server/db/seed.js';
 
-// Eager startup: ensure DB schema, seed admin, and start cleanup scheduler.
-ensureSchema();
+// Eager startup: seed admin and start cleanup scheduler.
 await ensureAdmin();
 startReapScheduler();
 

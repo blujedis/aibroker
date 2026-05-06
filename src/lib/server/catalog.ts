@@ -1,6 +1,6 @@
 import { nanoid } from 'nanoid';
 import { eq, sql } from 'drizzle-orm';
-import { db, schema } from './db/index.js';
+import { db, schema } from './db/postgres.js';
 import { inferProvider } from '../provider-catalog.js';
 
 // Shape of providersAndModels.json at ingest time.
@@ -59,7 +59,7 @@ function normalizeKind(k?: string): 'openai' | 'anthropic' | 'custom' {
  * we preserve the local `enabled` flag and only overwrite descriptive fields
  * (so operators can toggle visibility without fear of imports clobbering it).
  */
-export function ingestCatalog(raw: RawCatalog): IngestResult {
+export async function ingestCatalog(raw: RawCatalog): Promise<IngestResult> {
   const result: IngestResult = {
     providersInserted: 0,
     providersUpdated: 0,
@@ -67,7 +67,7 @@ export function ingestCatalog(raw: RawCatalog): IngestResult {
     modelsUpdated: 0
   };
 
-  db.transaction(() => {
+  await db.transaction(async (tx) => {
     // Providers -----------------------------------------------------------
     for (const [providerKey, p] of Object.entries(raw.providers ?? {})) {
       const name = String(providerKey ?? '').trim();
@@ -75,26 +75,25 @@ export function ingestCatalog(raw: RawCatalog): IngestResult {
       const inferred = inferProvider(name);
       const baseUrl = p.baseUrl?.trim() || inferred.baseUrl;
       const kind = p.kind ? normalizeKind(p.kind) : inferred.kind;
-      const existing = db
+      const existing = await tx
         .select({ id: schema.accessibleProviders.id })
         .from(schema.accessibleProviders)
         .where(eq(schema.accessibleProviders.name, name))
-        .get();
+        .limit(1)
+        .then((r) => r[0]);
       if (existing) {
-        db.update(schema.accessibleProviders)
+        await tx.update(schema.accessibleProviders)
           .set({
             // Only fill in missing connection info — never clobber user edits.
             baseUrl: sql`CASE WHEN COALESCE(${schema.accessibleProviders.baseUrl}, '') = '' THEN ${baseUrl} ELSE ${schema.accessibleProviders.baseUrl} END`,
             kind,
             updatedAt: new Date()
           })
-          .where(eq(schema.accessibleProviders.id, existing.id))
-          .run();
+          .where(eq(schema.accessibleProviders.id, existing.id));
         result.providersUpdated++;
       } else {
-        db.insert(schema.accessibleProviders)
-          .values({ id: nanoid(), name, baseUrl, kind, enabled: true })
-          .run();
+        await tx.insert(schema.accessibleProviders)
+          .values({ id: nanoid(), name, baseUrl, kind, enabled: true });
         result.providersInserted++;
       }
     }
@@ -130,21 +129,20 @@ export function ingestCatalog(raw: RawCatalog): IngestResult {
         hasNoPromptTrainingProvider: Boolean(m.hasNoPromptTrainingProvider),
         hasHipaaCompliantProvider: Boolean(m.hasHipaaCompliantProvider)
       };
-      const existing = db
+      const existing = await tx
         .select({ id: schema.accessibleModels.id })
         .from(schema.accessibleModels)
         .where(eq(schema.accessibleModels.slug, slug))
-        .get();
+        .limit(1)
+        .then((r) => r[0]);
       if (existing) {
-        db.update(schema.accessibleModels)
+        await tx.update(schema.accessibleModels)
           .set({ ...values, updatedAt: new Date() })
-          .where(eq(schema.accessibleModels.id, existing.id))
-          .run();
+          .where(eq(schema.accessibleModels.id, existing.id));
         result.modelsUpdated++;
       } else {
-        db.insert(schema.accessibleModels)
-          .values({ id: nanoid(), ...values, enabled: true })
-          .run();
+        await tx.insert(schema.accessibleModels)
+          .values({ id: nanoid(), ...values, enabled: true });
         result.modelsInserted++;
       }
     }

@@ -1,6 +1,6 @@
 import { fail, redirect, type Actions } from '@sveltejs/kit';
 import { eq } from 'drizzle-orm';
-import { db, schema } from '$lib/server/db/index.js';
+import { db, schema } from '$lib/server/db/postgres.js';
 import { hashPassword, verifyPassword } from '$lib/server/auth/password.js';
 import { destroySession, clearSessionCookie } from '$lib/server/auth/session.js';
 import { getGlobalSettings } from '$lib/server/settings.js';
@@ -8,10 +8,10 @@ import { getLinkedIdentities, unlinkIdentity } from '$lib/server/auth/oauth/iden
 import { isGoogleConfigured } from '$lib/server/auth/oauth/google.js';
 import type { PageServerLoad } from './$types';
 
-export const load: PageServerLoad = ({ locals }) => {
+export const load: PageServerLoad = async ({ locals }) => {
   if (!locals.user) return { user: null, globalMfaEnabled: false, linkedIdentities: [], googleEnabled: false };
 
-  const user = db
+  const userRows = await db
     .select({
       id: schema.users.id,
       name: schema.users.name,
@@ -22,10 +22,11 @@ export const load: PageServerLoad = ({ locals }) => {
     })
     .from(schema.users)
     .where(eq(schema.users.id, locals.user.id))
-    .get();
+    .limit(1);
+  const user = userRows[0];
 
-  const { globalMfaEnabled } = getGlobalSettings();
-  const linkedIdentities = getLinkedIdentities(locals.user.id);
+  const { globalMfaEnabled } = await getGlobalSettings();
+  const linkedIdentities = await getLinkedIdentities(locals.user.id);
 
   return {
     user: user ?? locals.user,
@@ -45,19 +46,17 @@ export const actions: Actions = {
 
     if (!name || !email) return fail(400, { error: 'Name and email are required' });
 
-    const duplicate = db
+    const allWithEmail = await db
       .select({ id: schema.users.id })
       .from(schema.users)
-      .where(eq(schema.users.email, email))
-      .all()
-      .find((row) => row.id !== locals.user?.id);
+      .where(eq(schema.users.email, email));
+    const duplicate = allWithEmail.find((row) => row.id !== locals.user?.id);
 
     if (duplicate) return fail(409, { error: 'Email is already in use' });
 
-    db.update(schema.users)
+    await db.update(schema.users)
       .set({ name, email, updatedAt: new Date() })
-      .where(eq(schema.users.id, locals.user.id))
-      .run();
+      .where(eq(schema.users.id, locals.user.id));
 
     return { ok: true, profileUpdated: true };
   },
@@ -67,42 +66,40 @@ export const actions: Actions = {
     const current = String(form.get('current') ?? '');
     const next = String(form.get('next') ?? '');
     if (next.length < 6) return fail(400, { error: 'Password must be at least 6 characters' });
-    const rows = db
+    const rows = await db
       .select()
       .from(schema.users)
-      .where(eq(schema.users.id, locals.user.id))
-      .all();
+      .where(eq(schema.users.id, locals.user.id));
     const u = rows[0];
     if (!u) return fail(404, { error: 'User not found' });
     const ok = await verifyPassword(u.passwordHash, current);
     if (!ok) return fail(400, { error: 'Current password is incorrect' });
     const hash = await hashPassword(next);
-    db.update(schema.users)
+    await db.update(schema.users)
       .set({ passwordHash: hash, updatedAt: new Date() })
-      .where(eq(schema.users.id, u.id))
-      .run();
+      .where(eq(schema.users.id, u.id));
     return { ok: true };
   },
   toggleMfa: async ({ locals, cookies }) => {
     if (!locals.user || !locals.sessionId) return fail(401, { error: 'Not authenticated' });
 
-    const { globalMfaEnabled } = getGlobalSettings();
+    const { globalMfaEnabled } = await getGlobalSettings();
     if (globalMfaEnabled) return fail(400, { error: 'MFA is globally enforced and cannot be changed.' });
 
-    const user = db
+    const userRows2 = await db
       .select({ mfaEnabled: schema.users.mfaEnabled })
       .from(schema.users)
       .where(eq(schema.users.id, locals.user.id))
-      .get();
+      .limit(1);
+    const user = userRows2[0];
 
     if (!user) return fail(404, { error: 'User not found' });
 
     const newMfaEnabled = !user.mfaEnabled;
 
-    db.update(schema.users)
+    await db.update(schema.users)
       .set({ mfaEnabled: newMfaEnabled, mfaSecret: newMfaEnabled ? undefined : null, updatedAt: new Date() })
-      .where(eq(schema.users.id, locals.user.id))
-      .run();
+      .where(eq(schema.users.id, locals.user.id));
 
     await destroySession(locals.sessionId);
     clearSessionCookie(cookies);
@@ -117,7 +114,7 @@ export const actions: Actions = {
     const provider = String(form.get('provider') ?? '').trim();
     if (!provider) return fail(400, { error: 'Provider is required' });
 
-    unlinkIdentity(locals.user.id, provider);
+    await unlinkIdentity(locals.user.id, provider);
     return { unlinked: true };
   }
 };

@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto';
 import { and, eq, gt, isNull, or } from 'drizzle-orm';
 import { nanoid } from 'nanoid';
-import { db, schema } from '$lib/server/db/index.js';
-import type { User } from '$lib/server/db/schema.js';
+import { db, schema } from '$lib/server/db/postgres.js';
+import type { User } from '$lib/server/db/schema.postgres.js';
 
 const DEFAULT_INVITE_EXPIRY_HOURS = 72;
 
@@ -23,16 +23,17 @@ export function hashInvitationToken(token: string): string {
   return createHash('sha256').update(token).digest('hex');
 }
 
-export function findInvitationByToken(token: string) {
-  return db
+export async function findInvitationByToken(token: string) {
+  const rows = await db
     .select()
     .from(schema.userInvitations)
     .where(eq(schema.userInvitations.tokenHash, hashInvitationToken(token)))
-    .get();
+    .limit(1);
+  return rows[0] ?? null;
 }
 
-export function findActiveInvitationByEmail(email: string) {
-  return db
+export async function findActiveInvitationByEmail(email: string) {
+  const rows = await db
     .select()
     .from(schema.userInvitations)
     .where(
@@ -43,10 +44,11 @@ export function findActiveInvitationByEmail(email: string) {
         gt(schema.userInvitations.expiresAt, new Date())
       )
     )
-    .get();
+    .limit(1);
+  return rows[0] ?? null;
 }
 
-export function createInvitation(input: {
+export async function createInvitation(input: {
   email: string;
   role: User['role'];
   profileId: string;
@@ -59,23 +61,21 @@ export function createInvitation(input: {
   const now = new Date();
   const expiresAt = input.expiresAt ?? getInviteExpiresAt(now);
 
-  db.insert(schema.userInvitations)
-    .values({
-      id: invitationId,
-      email: input.email.toLowerCase(),
-      role: input.role,
-      profileId: input.profileId,
-      tokenHash: hashInvitationToken(rawToken),
-      customMessage: input.customMessage?.trim() || null,
-      invitedByUserId: input.invitedByUserId,
-      acceptedByUserId: null,
-      expiresAt,
-      acceptedAt: null,
-      revokedAt: null,
-      createdAt: now,
-      updatedAt: now
-    })
-    .run();
+  await db.insert(schema.userInvitations).values({
+    id: invitationId,
+    email: input.email.toLowerCase(),
+    role: input.role,
+    profileId: input.profileId,
+    tokenHash: hashInvitationToken(rawToken),
+    customMessage: input.customMessage?.trim() || null,
+    invitedByUserId: input.invitedByUserId,
+    acceptedByUserId: null,
+    expiresAt,
+    acceptedAt: null,
+    revokedAt: null,
+    createdAt: now,
+    updatedAt: now
+  });
 
   return {
     id: invitationId,
@@ -100,23 +100,21 @@ export function isInvitationUsable(invitation: {
   return !invitation.acceptedAt && !invitation.revokedAt && invitation.expiresAt.getTime() > Date.now();
 }
 
-export function acceptInvitation(invitationId: string, acceptedByUserId: string): void {
-  db.update(schema.userInvitations)
+export async function acceptInvitation(invitationId: string, acceptedByUserId: string): Promise<void> {
+  await db.update(schema.userInvitations)
     .set({ acceptedByUserId, acceptedAt: new Date(), updatedAt: new Date() })
-    .where(eq(schema.userInvitations.id, invitationId))
-    .run();
+    .where(eq(schema.userInvitations.id, invitationId));
 }
 
-export function revokeInvitation(invitationId: string): void {
-  db.update(schema.userInvitations)
+export async function revokeInvitation(invitationId: string): Promise<void> {
+  await db.update(schema.userInvitations)
     .set({ revokedAt: new Date(), updatedAt: new Date() })
-    .where(eq(schema.userInvitations.id, invitationId))
-    .run();
+    .where(eq(schema.userInvitations.id, invitationId));
 }
 
-export function listVisibleInvitations(actor: Pick<User, 'id' | 'role'>) {
+export async function listVisibleInvitations(actor: Pick<User, 'id' | 'role'>) {
   if (actor.role === 'admin') {
-    return db.select().from(schema.userInvitations).all();
+    return db.select().from(schema.userInvitations);
   }
 
   return db
@@ -127,6 +125,5 @@ export function listVisibleInvitations(actor: Pick<User, 'id' | 'role'>) {
         eq(schema.userInvitations.invitedByUserId, actor.id),
         and(eq(schema.userInvitations.role, 'operator'), eq(schema.userInvitations.invitedByUserId, actor.id))
       )
-    )
-    .all();
+    );
 }

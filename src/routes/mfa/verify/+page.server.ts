@@ -1,6 +1,6 @@
 import { fail, redirect } from '@sveltejs/kit';
 import { eq } from 'drizzle-orm';
-import { db, schema } from '$lib/server/db/index.js';
+import { db, schema } from '$lib/server/db/postgres.js';
 import { decryptTotpSecret, verifyTotpToken } from '$lib/server/auth/mfa.js';
 import {
   consumeRecoveryCode,
@@ -11,15 +11,16 @@ import { getPendingMfaDestination } from '$lib/server/auth/mfa-flow.js';
 import { markSessionMfaComplete } from '$lib/server/auth/session.js';
 import type { Actions, PageServerLoad } from './$types';
 
-export const load: PageServerLoad = ({ locals }) => {
+export const load: PageServerLoad = async ({ locals }) => {
   if (locals.user) throw redirect(303, '/dashboard');
   if (!locals.pendingUser || !locals.sessionId) throw redirect(303, '/login');
 
-  const user = db
+  const userRows = await db
     .select({ id: schema.users.id, email: schema.users.email, mfaSecret: schema.users.mfaSecret, mfaEnabled: schema.users.mfaEnabled })
     .from(schema.users)
     .where(eq(schema.users.id, locals.pendingUser.id))
-    .get();
+    .limit(1);
+  const user = userRows[0];
 
   if (!user) throw redirect(303, '/login');
 
@@ -43,11 +44,12 @@ export const actions: Actions = {
     const token = String(form.get('token') ?? '').trim();
     if (!token) return fail(400, { error: 'Authenticator or recovery code is required' });
 
-    const user = db
+    const userRows = await db
       .select({ id: schema.users.id, mfaSecret: schema.users.mfaSecret, mfaEnabled: schema.users.mfaEnabled })
       .from(schema.users)
       .where(eq(schema.users.id, locals.pendingUser.id))
-      .get();
+      .limit(1);
+    const user = userRows[0];
 
     if (!user?.mfaEnabled || !user.mfaSecret) {
       throw redirect(303, '/mfa/setup');
@@ -55,13 +57,13 @@ export const actions: Actions = {
 
     const plainSecret = decryptTotpSecret(user.mfaSecret);
     const validTotp = verifyTotpToken(plainSecret, token);
-    const validRecovery = !validTotp && consumeRecoveryCode(user.id, token);
+    const validRecovery = !validTotp && await consumeRecoveryCode(user.id, token);
     const valid = validTotp || validRecovery;
     if (!valid) return fail(400, { error: 'Invalid authenticator code' });
 
     let recoveryCodes: string[] | null = null;
-    if (validTotp && !hasActiveRecoveryCodes(user.id)) {
-      recoveryCodes = replaceRecoveryCodesForUser(user.id);
+    if (validTotp && !(await hasActiveRecoveryCodes(user.id))) {
+      recoveryCodes = await replaceRecoveryCodesForUser(user.id);
     }
 
     await markSessionMfaComplete(locals.sessionId);

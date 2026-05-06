@@ -1,7 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { and, eq, gt, isNull } from 'drizzle-orm';
 import { nanoid } from 'nanoid';
-import { db, schema } from '$lib/server/db/index.js';
+import { db, schema } from '$lib/server/db/postgres.js';
 
 const DEFAULT_EXPIRY_HOURS = 1;
 
@@ -19,25 +19,24 @@ export function hashPasswordResetToken(token: string): string {
 }
 
 /** Store a reset token and return the raw (unhashed) value to email the user. */
-export function createPasswordResetToken(userId: string): string {
+export async function createPasswordResetToken(userId: string): Promise<string> {
   const rawToken = createPasswordResetTokenValue();
   const tokenHash = hashPasswordResetToken(rawToken);
   const expiresAt = new Date(
     Date.now() + getPasswordResetExpiryHours() * 60 * 60 * 1000
   );
 
-  db.insert(schema.passwordResetTokens)
-    .values({ id: nanoid(), userId, tokenHash, expiresAt })
-    .run();
+  await db.insert(schema.passwordResetTokens)
+    .values({ id: nanoid(), userId, tokenHash, expiresAt });
 
   return rawToken;
 }
 
 /** Look up a token and return the userId if valid (exists, not expired, not used). */
-export function verifyPasswordResetToken(rawToken: string): string | null {
+export async function verifyPasswordResetToken(rawToken: string): Promise<string | null> {
   const tokenHash = hashPasswordResetToken(rawToken);
 
-  const row = db
+  const rows = await db
     .select()
     .from(schema.passwordResetTokens)
     .where(
@@ -47,8 +46,9 @@ export function verifyPasswordResetToken(rawToken: string): string | null {
         gt(schema.passwordResetTokens.expiresAt, new Date())
       )
     )
-    .get();
+    .limit(1);
 
+  const row = rows[0];
   if (!row) return null;
 
   // Constant-time comparison as a defence-in-depth measure
@@ -60,10 +60,9 @@ export function verifyPasswordResetToken(rawToken: string): string | null {
 }
 
 /** Mark a token as used so it cannot be replayed. */
-export function consumePasswordResetToken(rawToken: string): void {
+export async function consumePasswordResetToken(rawToken: string): Promise<void> {
   const tokenHash = hashPasswordResetToken(rawToken);
-  db.update(schema.passwordResetTokens)
+  await db.update(schema.passwordResetTokens)
     .set({ usedAt: new Date() })
-    .where(eq(schema.passwordResetTokens.tokenHash, tokenHash))
-    .run();
+    .where(eq(schema.passwordResetTokens.tokenHash, tokenHash));
 }

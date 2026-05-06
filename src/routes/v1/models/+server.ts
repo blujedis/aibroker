@@ -1,6 +1,6 @@
 import type { RequestHandler } from './$types';
 import { json } from '@sveltejs/kit';
-import { db, schema } from '$lib/server/db/index.js';
+import { db, schema } from '$lib/server/db/postgres.js';
 import { extractBearer } from '$lib/server/proxy/router.js';
 import { eq } from 'drizzle-orm';
 
@@ -9,21 +9,21 @@ export const GET: RequestHandler = async ({ request }) => {
   const token = extractBearer(request);
   if (!token) return json({ error: { message: 'Missing API key' } }, { status: 401 });
 
-  const vk = db
+  const vkRows = await db
     .select()
     .from(schema.virtualKeys)
     .where(eq(schema.virtualKeys.token, token))
-    .get();
+    .limit(1);
+  const vk = vkRows[0];
   if (!vk || !vk.enabled)
     return json({ error: { message: 'Invalid API key' } }, { status: 401 });
 
-  const allowed = db
+  const allowed = await db
     .select({ modelId: schema.virtualKeyModels.modelId })
     .from(schema.virtualKeyModels)
-    .where(eq(schema.virtualKeyModels.virtualKeyId, vk.id))
-    .all();
+    .where(eq(schema.virtualKeyModels.virtualKeyId, vk.id));
 
-  const all = db.select().from(schema.models).where(eq(schema.models.enabled, true)).all();
+  const all = await db.select().from(schema.models).where(eq(schema.models.enabled, true));
   const filtered =
     allowed.length === 0 ? all : all.filter((m) => allowed.some((a) => a.modelId === m.id));
 

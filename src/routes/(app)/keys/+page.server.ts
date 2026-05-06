@@ -1,7 +1,7 @@
 import { fail, type Actions } from '@sveltejs/kit';
 import { eq, inArray, isNull, or } from 'drizzle-orm';
 import { nanoid } from 'nanoid';
-import { db, schema } from '$lib/server/db/index.js';
+import { db, schema } from '$lib/server/db/postgres.js';
 import { filterEligibleModels } from '$lib/server/scope.js';
 import { logScopeEvent } from '$lib/server/observability/scope.js';
 import {
@@ -15,9 +15,9 @@ function generateToken(): string {
   return 'ab-' + nanoid(40);
 }
 
-export const load: PageServerLoad = ({ locals }) => {
+export const load: PageServerLoad = async ({ locals }) => {
   const actor = requireUser(locals.user);
-  const visibleProfileIds = getVisibleProfileIds(actor);
+  const visibleProfileIds = await getVisibleProfileIds(actor);
 
   const rowsQuery = db
     .select({
@@ -36,17 +36,17 @@ export const load: PageServerLoad = ({ locals }) => {
 
   const rows =
     visibleProfileIds === null
-      ? rowsQuery.all()
+      ? await rowsQuery
       : visibleProfileIds.length === 0
         ? []
-        : rowsQuery.where(inArray(schema.virtualKeys.profileId, visibleProfileIds)).all();
+        : await rowsQuery.where(inArray(schema.virtualKeys.profileId, visibleProfileIds));
 
   const profiles =
     visibleProfileIds === null
-      ? db.select().from(schema.profiles).all()
+      ? await db.select().from(schema.profiles)
       : visibleProfileIds.length === 0
         ? []
-        : db.select().from(schema.profiles).where(inArray(schema.profiles.id, visibleProfileIds)).all();
+        : await db.select().from(schema.profiles).where(inArray(schema.profiles.id, visibleProfileIds));
 
   const modelsQuery = db
     .select()
@@ -55,17 +55,17 @@ export const load: PageServerLoad = ({ locals }) => {
 
   const modelRows =
     visibleProfileIds === null
-      ? modelsQuery.all()
+      ? await modelsQuery
       : visibleProfileIds.length === 0
         ? []
-        : modelsQuery
+        : await modelsQuery
           .where(
             or(
               isNull(schema.backends.profileId),
               inArray(schema.backends.profileId, visibleProfileIds)
             )
           )
-          .all();
+    ;
 
   const models = modelRows.map((row) => ({
     ...row.models,
@@ -73,7 +73,7 @@ export const load: PageServerLoad = ({ locals }) => {
   }));
 
   // gather allowed model ids per key
-  const allowed = db.select().from(schema.virtualKeyModels).all();
+  const allowed = await db.select().from(schema.virtualKeyModels);
   const allowedByKey = new Map<string, string[]>();
   for (const a of allowed) {
     const arr = allowedByKey.get(a.virtualKeyId) ?? [];
@@ -110,7 +110,7 @@ export const actions: Actions = {
 
     const id = nanoid();
     const token = generateToken();
-    db.insert(schema.virtualKeys)
+    await db.insert(schema.virtualKeys)
       .values({
         id,
         profileId,
@@ -120,15 +120,14 @@ export const actions: Actions = {
         budgetFrequency: parseFreq(form.get('budgetFrequency')),
         enabled: true
       })
-      .run();
 
     // Filter submitted modelIds to only eligible ones (auto-clean)
     const submittedModelIds = form.getAll('modelIds').map(String).filter(Boolean);
-    const allModels = db
+    const allModels = await db
       .select()
       .from(schema.models)
       .leftJoin(schema.backends, eq(schema.backends.id, schema.models.backendId))
-      .all();
+      ;
 
     const modelsWithBackendInfo = allModels.map((row) => ({
       id: row.models.id,
@@ -149,7 +148,7 @@ export const actions: Actions = {
     }
 
     for (const m of eligibleModelIds) {
-      db.insert(schema.virtualKeyModels).values({ virtualKeyId: id, modelId: m }).run();
+      await db.insert(schema.virtualKeyModels).values({ virtualKeyId: id, modelId: m });
     }
 
     return {
@@ -164,18 +163,18 @@ export const actions: Actions = {
     const id = String(form.get('id') ?? '');
     if (!id) return fail(400, { error: 'Missing id' });
 
-    const existing = db
+    const existingRows = await db
       .select({ profileId: schema.virtualKeys.profileId })
       .from(schema.virtualKeys)
       .where(eq(schema.virtualKeys.id, id))
-      .get();
-
+      .limit(1);
+    const existing = existingRows[0];
     if (!existing) return fail(404, { error: 'Virtual key not found' });
     assertCanAccessProfile(actor, existing.profileId);
 
     const profileId = String(form.get('profileId') ?? '');
     assertCanAccessProfile(actor, profileId);
-    db.update(schema.virtualKeys)
+    await db.update(schema.virtualKeys)
       .set({
         name: String(form.get('name') ?? '').trim(),
         profileId,
@@ -185,19 +184,16 @@ export const actions: Actions = {
         updatedAt: new Date()
       })
       .where(eq(schema.virtualKeys.id, id))
-      .run();
 
     // replace allow-list with eligible models only (auto-clean)
-    db.delete(schema.virtualKeyModels)
+    await db.delete(schema.virtualKeyModels)
       .where(eq(schema.virtualKeyModels.virtualKeyId, id))
-      .run();
 
     const submittedModelIds = form.getAll('modelIds').map(String).filter(Boolean);
-    const allModels = db
+    const allModels = await db
       .select()
       .from(schema.models)
-      .leftJoin(schema.backends, eq(schema.backends.id, schema.models.backendId))
-      .all();
+      .leftJoin(schema.backends, eq(schema.backends.id, schema.models.backendId));
 
     const modelsWithBackendInfo = allModels.map((row) => ({
       id: row.models.id,
@@ -218,7 +214,7 @@ export const actions: Actions = {
     }
 
     for (const m of eligibleModelIds) {
-      db.insert(schema.virtualKeyModels).values({ virtualKeyId: id, modelId: m }).run();
+      await db.insert(schema.virtualKeyModels).values({ virtualKeyId: id, modelId: m });
     }
 
     return {
@@ -232,19 +228,19 @@ export const actions: Actions = {
     const id = String(form.get('id') ?? '');
     if (!id) return fail(400, { error: 'Missing id' });
 
-    const existing = db
+    const existingRows2 = await db
       .select({ profileId: schema.virtualKeys.profileId })
       .from(schema.virtualKeys)
       .where(eq(schema.virtualKeys.id, id))
-      .get();
+      .limit(1);
+    const existing = existingRows2[0];
     if (!existing) return fail(404, { error: 'Virtual key not found' });
     assertCanAccessProfile(actor, existing.profileId);
 
     const token = generateToken();
-    db.update(schema.virtualKeys)
+    await db.update(schema.virtualKeys)
       .set({ token, updatedAt: new Date() })
       .where(eq(schema.virtualKeys.id, id))
-      .run();
     return { ok: true, rotatedToken: token };
   },
   delete: async ({ request, locals }) => {
@@ -253,15 +249,16 @@ export const actions: Actions = {
     const id = String(form.get('id') ?? '');
     if (!id) return fail(400, { error: 'Missing id' });
 
-    const existing = db
+    const existingRows2 = await db
       .select({ profileId: schema.virtualKeys.profileId })
       .from(schema.virtualKeys)
       .where(eq(schema.virtualKeys.id, id))
-      .get();
+      .limit(1);
+    const existing = existingRows2[0];
     if (!existing) return fail(404, { error: 'Virtual key not found' });
     assertCanAccessProfile(actor, existing.profileId);
 
-    db.delete(schema.virtualKeys).where(eq(schema.virtualKeys.id, id)).run();
+    await db.delete(schema.virtualKeys).where(eq(schema.virtualKeys.id, id));
     return { ok: true };
   }
 };

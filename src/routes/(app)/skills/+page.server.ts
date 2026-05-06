@@ -1,31 +1,30 @@
 import { fail, type Actions } from '@sveltejs/kit';
 import { asc, eq, inArray } from 'drizzle-orm';
 import { nanoid } from 'nanoid';
-import { db, schema } from '$lib/server/db/index.js';
+import { db, schema } from '$lib/server/db/postgres.js';
 import { assertCanAccessProfile, getVisibleProfileIds, requireUser } from '$lib/server/authz.js';
 import type { PageServerLoad } from './$types';
 
-export const load: PageServerLoad = ({ locals }) => {
+export const load: PageServerLoad = async ({ locals }) => {
   const actor = requireUser(locals.user);
-  const visibleProfileIds = getVisibleProfileIds(actor);
+  const visibleProfileIds = await getVisibleProfileIds(actor);
 
   const skills =
     visibleProfileIds === null
-      ? db.select().from(schema.skills).all()
+      ? await db.select().from(schema.skills)
       : visibleProfileIds.length === 0
         ? []
-        : db.select().from(schema.skills).where(inArray(schema.skills.profileId, visibleProfileIds)).all();
+        : await db.select().from(schema.skills).where(inArray(schema.skills.profileId, visibleProfileIds));
   const profiles =
     visibleProfileIds === null
-      ? db.select().from(schema.profiles).orderBy(asc(schema.profiles.name)).all()
+      ? await db.select().from(schema.profiles).orderBy(asc(schema.profiles.name))
       : visibleProfileIds.length === 0
         ? []
-        : db
+        : await db
           .select()
           .from(schema.profiles)
           .where(inArray(schema.profiles.id, visibleProfileIds))
-          .orderBy(asc(schema.profiles.name))
-          .all();
+          .orderBy(asc(schema.profiles.name));
   return { skills, profiles };
 };
 
@@ -44,11 +43,11 @@ export const actions: Actions = {
 
     // Validate profile exists if provided
     if (profileId) {
-      const profile = db.query.profiles.findFirst({ where: eq(schema.profiles.id, profileId) });
-      if (!profile) return fail(400, { error: 'Profile not found' });
+      const profileRows = await db.select().from(schema.profiles).where(eq(schema.profiles.id, profileId)).limit(1);
+      if (!profileRows[0]) return fail(400, { error: 'Profile not found' });
     }
 
-    db.insert(schema.skills)
+    await db.insert(schema.skills)
       .values({
         id: nanoid(),
         name,
@@ -56,8 +55,7 @@ export const actions: Actions = {
         instructions: String(form.get('instructions') ?? ''),
         profileId,
         enabled: true
-      })
-      .run();
+      });
     return { ok: true };
   },
   update: async ({ request, locals }) => {
@@ -67,11 +65,12 @@ export const actions: Actions = {
     if (!id) return fail(400, { error: 'Missing id' });
     const profileId = String(form.get('profileId') ?? '').trim() || null;
 
-    const existing = db
+    const existingRows = await db
       .select({ profileId: schema.skills.profileId })
       .from(schema.skills)
       .where(eq(schema.skills.id, id))
-      .get();
+      .limit(1);
+    const existing = existingRows[0];
     if (!existing) return fail(404, { error: 'Skill not found' });
     assertCanAccessProfile(actor, existing.profileId);
     if (actor.role !== 'admin' && !profileId) {
@@ -81,11 +80,11 @@ export const actions: Actions = {
 
     // Validate profile exists if provided
     if (profileId) {
-      const profile = db.query.profiles.findFirst({ where: eq(schema.profiles.id, profileId) });
-      if (!profile) return fail(400, { error: 'Profile not found' });
+      const profileRows2 = await db.select().from(schema.profiles).where(eq(schema.profiles.id, profileId)).limit(1);
+      if (!profileRows2[0]) return fail(400, { error: 'Profile not found' });
     }
 
-    db.update(schema.skills)
+    await db.update(schema.skills)
       .set({
         name: String(form.get('name') ?? ''),
         description: String(form.get('description') ?? '') || null,
@@ -94,8 +93,7 @@ export const actions: Actions = {
         enabled: form.get('enabled') === 'on',
         updatedAt: new Date()
       })
-      .where(eq(schema.skills.id, id))
-      .run();
+      .where(eq(schema.skills.id, id));
     return { ok: true };
   },
   delete: async ({ request, locals }) => {
@@ -103,15 +101,16 @@ export const actions: Actions = {
     const form = await request.formData();
     const id = String(form.get('id') ?? '');
 
-    const existing = db
+    const existingRows2 = await db
       .select({ profileId: schema.skills.profileId })
       .from(schema.skills)
       .where(eq(schema.skills.id, id))
-      .get();
+      .limit(1);
+    const existing = existingRows2[0];
     if (!existing) return fail(404, { error: 'Skill not found' });
     assertCanAccessProfile(actor, existing.profileId);
 
-    db.delete(schema.skills).where(eq(schema.skills.id, id)).run();
+    await db.delete(schema.skills).where(eq(schema.skills.id, id));
     return { ok: true };
   }
 };

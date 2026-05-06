@@ -1,7 +1,7 @@
 import { fail, type Actions } from '@sveltejs/kit';
 import { asc, eq, inArray } from 'drizzle-orm';
 import { nanoid } from 'nanoid';
-import { db, schema } from '$lib/server/db/index.js';
+import { db, schema } from '$lib/server/db/postgres.js';
 import { guardrailSummary } from '$lib/server/stats.js';
 import { resolveRange, type RangeKey } from '$lib/utils/date-range.js';
 import { assertCanAccessProfile, getVisibleProfileIds, requireUser } from '$lib/server/authz.js';
@@ -27,9 +27,9 @@ function parseKind(v: FormDataEntryValue | null): GuardrailKind {
   return VALID_KINDS.includes(s) ? s : 'regex_block';
 }
 
-export const load: PageServerLoad = ({ url, locals }) => {
+export const load: PageServerLoad = async ({ url, locals }) => {
   const actor = requireUser(locals.user);
-  const visibleProfileIds = getVisibleProfileIds(actor);
+  const visibleProfileIds = await getVisibleProfileIds(actor);
 
   const rangeKey = (url.searchParams.get('range') as RangeKey) ?? 'last7';
   const start = url.searchParams.get('start') ?? undefined;
@@ -37,27 +37,25 @@ export const load: PageServerLoad = ({ url, locals }) => {
   const range = resolveRange(rangeKey, { start, end });
   const guardrails =
     visibleProfileIds === null
-      ? db.select().from(schema.guardrails).all()
+      ? await db.select().from(schema.guardrails)
       : visibleProfileIds.length === 0
         ? []
-        : db
+        : await db
           .select()
           .from(schema.guardrails)
-          .where(inArray(schema.guardrails.profileId, visibleProfileIds))
-          .all();
+          .where(inArray(schema.guardrails.profileId, visibleProfileIds));
 
   const profiles =
     visibleProfileIds === null
-      ? db.select().from(schema.profiles).orderBy(asc(schema.profiles.name)).all()
+      ? await db.select().from(schema.profiles).orderBy(asc(schema.profiles.name))
       : visibleProfileIds.length === 0
         ? []
-        : db
+        : await db
           .select()
           .from(schema.profiles)
           .where(inArray(schema.profiles.id, visibleProfileIds))
-          .orderBy(asc(schema.profiles.name))
-          .all();
-  const summary = guardrailSummary(range);
+          .orderBy(asc(schema.profiles.name));
+  const summary = await guardrailSummary(range);
   return {
     guardrails,
     profiles,
@@ -86,8 +84,8 @@ export const actions: Actions = {
 
     // Validate profile exists if provided
     if (profileId) {
-      const profile = db.query.profiles.findFirst({ where: eq(schema.profiles.id, profileId) });
-      if (!profile) return fail(400, { error: 'Profile not found' });
+      const profileRows = await db.select().from(schema.profiles).where(eq(schema.profiles.id, profileId)).limit(1);
+      if (!profileRows[0]) return fail(400, { error: 'Profile not found' });
     }
 
     try {
@@ -95,7 +93,7 @@ export const actions: Actions = {
     } catch {
       return fail(400, { error: 'config must be valid JSON' });
     }
-    db.insert(schema.guardrails)
+    await db.insert(schema.guardrails)
       .values({
         id: nanoid(),
         name,
@@ -106,7 +104,6 @@ export const actions: Actions = {
         priority: Number(form.get('priority') ?? 100) | 0,
         enabled: true
       })
-      .run();
     return { ok: true };
   },
   update: async ({ request, locals }) => {
@@ -117,11 +114,12 @@ export const actions: Actions = {
     const configRaw = String(form.get('config') ?? '{}');
     const profileId = String(form.get('profileId') ?? '').trim() || null;
 
-    const existing = db
+    const existingRows = await db
       .select({ profileId: schema.guardrails.profileId })
       .from(schema.guardrails)
       .where(eq(schema.guardrails.id, id))
-      .get();
+      .limit(1);
+    const existing = existingRows[0];
     if (!existing) return fail(404, { error: 'Guardrail not found' });
     assertCanAccessProfile(actor, existing.profileId);
     if (actor.role !== 'admin' && !profileId) {
@@ -131,8 +129,8 @@ export const actions: Actions = {
 
     // Validate profile exists if provided
     if (profileId) {
-      const profile = db.query.profiles.findFirst({ where: eq(schema.profiles.id, profileId) });
-      if (!profile) return fail(400, { error: 'Profile not found' });
+      const profileRows2 = await db.select().from(schema.profiles).where(eq(schema.profiles.id, profileId)).limit(1);
+      if (!profileRows2[0]) return fail(400, { error: 'Profile not found' });
     }
 
     try {
@@ -140,7 +138,7 @@ export const actions: Actions = {
     } catch {
       return fail(400, { error: 'config must be valid JSON' });
     }
-    db.update(schema.guardrails)
+    await db.update(schema.guardrails)
       .set({
         name: String(form.get('name') ?? ''),
         stage: String(form.get('stage') ?? 'pre') as 'pre' | 'during' | 'post',
@@ -152,7 +150,6 @@ export const actions: Actions = {
         updatedAt: new Date()
       })
       .where(eq(schema.guardrails.id, id))
-      .run();
     return { ok: true };
   },
   delete: async ({ request, locals }) => {
@@ -160,15 +157,16 @@ export const actions: Actions = {
     const form = await request.formData();
     const id = String(form.get('id') ?? '');
 
-    const existing = db
+    const existingRows = await db
       .select({ profileId: schema.guardrails.profileId })
       .from(schema.guardrails)
       .where(eq(schema.guardrails.id, id))
-      .get();
+      .limit(1);
+    const existing = existingRows[0];
     if (!existing) return fail(404, { error: 'Guardrail not found' });
     assertCanAccessProfile(actor, existing.profileId);
 
-    db.delete(schema.guardrails).where(eq(schema.guardrails.id, id)).run();
+    await db.delete(schema.guardrails).where(eq(schema.guardrails.id, id));
     return { ok: true };
   }
 };

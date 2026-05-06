@@ -1,7 +1,7 @@
 import { fail, type Actions } from '@sveltejs/kit';
 import { asc, eq, inArray } from 'drizzle-orm';
 import { nanoid } from 'nanoid';
-import { db, schema } from '$lib/server/db/index.js';
+import { db, schema } from '$lib/server/db/postgres.js';
 import { encryptSecret, isEncryptedSecret } from '$lib/server/secrets.js';
 import {
   assertCanAccessProfile,
@@ -92,32 +92,32 @@ function safeJsonArray(v: string): string[] {
   }
 }
 
-function sanitizeBackendsForClient() {
-  const backends = db.select().from(schema.backends).orderBy(asc(schema.backends.name)).all();
+async function sanitizeBackendsForClient() {
+  const backends = await db.select().from(schema.backends).orderBy(asc(schema.backends.name));
 
   for (const backend of backends) {
     if (backend.apiKey && !isEncryptedSecret(backend.apiKey)) {
-      db.update(schema.backends)
+      await db.update(schema.backends)
         .set({
           apiKey: encryptSecret(backend.apiKey),
           updatedAt: new Date()
         })
         .where(eq(schema.backends.id, backend.id))
-        .run();
     }
   }
 
   return backends.map(({ apiKey: _apiKey, ...backend }) => backend);
 }
 
-export const load: PageServerLoad = ({ locals }) => {
+export const load: PageServerLoad = async ({ locals }) => {
   const actor = requireUser(locals.user);
-  const visibleProfileIds = getVisibleProfileIds(actor);
+  const visibleProfileIds = await getVisibleProfileIds(actor);
 
+  const allBackends = await sanitizeBackendsForClient();
   const backends =
     visibleProfileIds === null
-      ? sanitizeBackendsForClient()
-      : sanitizeBackendsForClient().filter((backend) =>
+      ? allBackends
+      : allBackends.filter((backend) =>
         backend.profileId ? visibleProfileIds.includes(backend.profileId) : false
       );
 
@@ -128,13 +128,12 @@ export const load: PageServerLoad = ({ locals }) => {
 
   const modelRows =
     visibleProfileIds === null
-      ? modelsQuery.orderBy(asc(schema.models.publicId)).all()
+      ? await modelsQuery.orderBy(asc(schema.models.publicId))
       : visibleProfileIds.length === 0
         ? []
-        : modelsQuery
+        : await modelsQuery
           .where(inArray(schema.backends.profileId, visibleProfileIds))
-          .orderBy(asc(schema.models.publicId))
-          .all();
+          .orderBy(asc(schema.models.publicId));
 
   const models = modelRows.map((row) => ({
     ...row.models,
@@ -144,29 +143,27 @@ export const load: PageServerLoad = ({ locals }) => {
 
   const profiles =
     visibleProfileIds === null
-      ? db.select().from(schema.profiles).orderBy(asc(schema.profiles.name)).all()
+      ? await db.select().from(schema.profiles).orderBy(asc(schema.profiles.name))
       : visibleProfileIds.length === 0
         ? []
-        : db
+        : await db
           .select()
           .from(schema.profiles)
           .where(inArray(schema.profiles.id, visibleProfileIds))
           .orderBy(asc(schema.profiles.name))
-          .all();
 
-  const accessibleProviders = db
+  const accessibleProviders = await db
     .select()
     .from(schema.accessibleProviders)
     .where(eq(schema.accessibleProviders.enabled, true))
     .orderBy(asc(schema.accessibleProviders.name))
-    .all();
 
-  const accessibleModels = db
+  const accessibleModels = (await db
     .select()
     .from(schema.accessibleModels)
     .where(eq(schema.accessibleModels.enabled, true))
     .orderBy(asc(schema.accessibleModels.slug))
-    .all()
+  )
     .map((m) => ({
       ...m,
       tagsParsed: safeJsonArray(m.tags),
@@ -194,11 +191,11 @@ export const actions: Actions = {
 
     // Validate profile exists if provided
     if (profileId) {
-      const profile = db.query.profiles.findFirst({ where: eq(schema.profiles.id, profileId) });
-      if (!profile) return fail(400, { error: 'Profile not found' });
+      const profileRows = await db.select().from(schema.profiles).where(eq(schema.profiles.id, profileId)).limit(1);
+      if (!profileRows[0]) return fail(400, { error: 'Profile not found' });
     }
 
-    db.insert(schema.backends)
+    await db.insert(schema.backends)
       .values({
         id: nanoid(),
         name,
@@ -208,7 +205,6 @@ export const actions: Actions = {
         profileId,
         enabled: true
       })
-      .run();
     return { ok: true };
   },
   backendUpdate: async ({ request, locals }) => {
@@ -219,18 +215,19 @@ export const actions: Actions = {
     const nextApiKey = str(form.get('apiKey'));
     const profileId = str(form.get('profileId')) || null;
 
-    const existing = db
+    const existingRows = await db
       .select({ profileId: schema.backends.profileId })
       .from(schema.backends)
       .where(eq(schema.backends.id, id))
-      .get();
+      .limit(1);
+    const existing = existingRows[0];
     if (!existing) return fail(404, { error: 'Backend not found' });
     assertCanAccessProfile(actor, existing.profileId);
 
     // Validate profile exists if provided
     if (profileId) {
-      const profile = db.query.profiles.findFirst({ where: eq(schema.profiles.id, profileId) });
-      if (!profile) return fail(400, { error: 'Profile not found' });
+      const profileRows2 = await db.select().from(schema.profiles).where(eq(schema.profiles.id, profileId)).limit(1);
+      if (!profileRows2[0]) return fail(400, { error: 'Profile not found' });
     }
     if (actor.role !== 'admin' && !profileId) {
       return fail(400, { error: 'Managers must keep backends profile-scoped' });
@@ -255,7 +252,7 @@ export const actions: Actions = {
     };
     if (nextApiKey) backendPatch.apiKey = encryptSecret(nextApiKey);
 
-    db.update(schema.backends).set(backendPatch).where(eq(schema.backends.id, id)).run();
+    await db.update(schema.backends).set(backendPatch).where(eq(schema.backends.id, id));
     return { ok: true };
   },
   backendDelete: async ({ request, locals }) => {
@@ -263,15 +260,16 @@ export const actions: Actions = {
     const form = await request.formData();
     const id = str(form.get('id'));
 
-    const existing = db
+    const existingRows = await db
       .select({ profileId: schema.backends.profileId })
       .from(schema.backends)
       .where(eq(schema.backends.id, id))
-      .get();
+      .limit(1);
+    const existing = existingRows[0];
     if (!existing) return fail(404, { error: 'Backend not found' });
     assertCanAccessProfile(actor, existing.profileId);
 
-    db.delete(schema.backends).where(eq(schema.backends.id, id)).run();
+    await db.delete(schema.backends).where(eq(schema.backends.id, id));
     return { ok: true };
   },
   modelCreate: async ({ request, locals }) => {
@@ -284,16 +282,17 @@ export const actions: Actions = {
     if (!publicId || !backendId || !upstreamId)
       return fail(400, { error: 'publicId, backendId, upstreamId required' });
 
-    const backend = db
+    const backendRows = await db
       .select({ profileId: schema.backends.profileId })
       .from(schema.backends)
       .where(eq(schema.backends.id, backendId))
-      .get();
+      .limit(1);
+    const backend = backendRows[0];
     if (!backend) return fail(400, { error: 'Backend not found' });
     assertCanAccessProfile(actor, backend.profileId);
 
     const extras = buildModelValues(form);
-    db.insert(schema.models)
+    await db.insert(schema.models)
       .values({
         id: nanoid(),
         publicId,
@@ -306,7 +305,6 @@ export const actions: Actions = {
           ? form.get('supportsStreaming') === 'on'
           : true
       })
-      .run();
     return { ok: true };
   },
   modelUpdate: async ({ request, locals }) => {
@@ -315,26 +313,28 @@ export const actions: Actions = {
     const id = str(form.get('id'));
     if (!id) return fail(400, { error: 'Missing id' });
 
-    const existing = db
+    const existingRows2 = await db
       .select({ profileId: schema.backends.profileId })
       .from(schema.models)
       .leftJoin(schema.backends, eq(schema.backends.id, schema.models.backendId))
       .where(eq(schema.models.id, id))
-      .get();
+      .limit(1);
+    const existing = existingRows2[0];
     if (!existing) return fail(404, { error: 'Model not found' });
     assertCanAccessProfile(actor, existing.profileId ?? null);
 
     const backendId = str(form.get('backendId'));
-    const targetBackend = db
+    const targetBackendRows = await db
       .select({ profileId: schema.backends.profileId })
       .from(schema.backends)
       .where(eq(schema.backends.id, backendId))
-      .get();
+      .limit(1);
+    const targetBackend = targetBackendRows[0];
     if (!targetBackend) return fail(400, { error: 'Backend not found' });
     assertCanAccessProfile(actor, targetBackend.profileId);
 
     const extras = buildModelValues(form);
-    db.update(schema.models)
+    await db.update(schema.models)
       .set({
         publicId: str(form.get('publicId')),
         displayName: str(form.get('displayName')),
@@ -344,7 +344,6 @@ export const actions: Actions = {
         updatedAt: new Date()
       })
       .where(eq(schema.models.id, id))
-      .run();
     return { ok: true };
   },
   modelDelete: async ({ request, locals }) => {
@@ -352,16 +351,17 @@ export const actions: Actions = {
     const form = await request.formData();
     const id = str(form.get('id'));
 
-    const existing = db
+    const existingRows4 = await db
       .select({ profileId: schema.backends.profileId })
       .from(schema.models)
       .leftJoin(schema.backends, eq(schema.backends.id, schema.models.backendId))
       .where(eq(schema.models.id, id))
-      .get();
+      .limit(1);
+    const existing = existingRows4[0];
     if (!existing) return fail(404, { error: 'Model not found' });
     assertCanAccessProfile(actor, existing.profileId ?? null);
 
-    db.delete(schema.models).where(eq(schema.models.id, id)).run();
+    await db.delete(schema.models).where(eq(schema.models.id, id));
     return { ok: true };
   }
 };

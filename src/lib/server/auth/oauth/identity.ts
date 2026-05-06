@@ -1,6 +1,6 @@
 import { randomBytes } from 'crypto';
 import { and, eq } from 'drizzle-orm';
-import { db, schema } from '$lib/server/db/index.js';
+import { db, schema } from '$lib/server/db/postgres.js';
 
 export interface LinkedIdentity {
   provider: string;
@@ -8,11 +8,11 @@ export interface LinkedIdentity {
   linkedAt: Date;
 }
 
-export function findIdentity(
+export async function findIdentity(
   provider: string,
   providerUserId: string
-): { userId: string } | null {
-  const row = db
+): Promise<{ userId: string } | null> {
+  const rows = await db
     .select({ userId: schema.userIdentities.userId })
     .from(schema.userIdentities)
     .where(
@@ -21,44 +21,41 @@ export function findIdentity(
         eq(schema.userIdentities.providerUserId, providerUserId)
       )
     )
-    .get();
+    .limit(1);
 
-  return row ?? null;
+  return rows[0] ?? null;
 }
 
-export function linkIdentity(
+export async function linkIdentity(
   userId: string,
   provider: string,
   providerUserId: string,
   providerEmail: string | null
-): void {
+): Promise<void> {
   const id = randomBytes(16).toString('hex');
   const now = new Date();
 
-  db.insert(schema.userIdentities)
-    .values({
-      id,
-      userId,
-      provider,
-      providerUserId,
-      providerEmail,
-      linkedAt: now
-    })
-    .run();
+  await db.insert(schema.userIdentities).values({
+    id,
+    userId,
+    provider,
+    providerUserId,
+    providerEmail,
+    linkedAt: now
+  });
 }
 
-export function unlinkIdentity(userId: string, provider: string): void {
-  db.delete(schema.userIdentities)
+export async function unlinkIdentity(userId: string, provider: string): Promise<void> {
+  await db.delete(schema.userIdentities)
     .where(
       and(
         eq(schema.userIdentities.userId, userId),
         eq(schema.userIdentities.provider, provider)
       )
-    )
-    .run();
+    );
 }
 
-export function getLinkedIdentities(userId: string): LinkedIdentity[] {
+export async function getLinkedIdentities(userId: string): Promise<LinkedIdentity[]> {
   return db
     .select({
       provider: schema.userIdentities.provider,
@@ -66,6 +63,5 @@ export function getLinkedIdentities(userId: string): LinkedIdentity[] {
       linkedAt: schema.userIdentities.linkedAt
     })
     .from(schema.userIdentities)
-    .where(eq(schema.userIdentities.userId, userId))
-    .all();
+    .where(eq(schema.userIdentities.userId, userId));
 }

@@ -2,7 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { and, eq, gt, isNotNull, isNull, lt, or } from 'drizzle-orm';
 import { nanoid } from 'nanoid';
 import type { Cookies } from '@sveltejs/kit';
-import { db, schema } from '../db/index.js';
+import { db, schema } from '../db/postgres.js';
 
 export const SESSION_COOKIE = 'ab_session';
 export const REFRESH_TOKEN_COOKIE = 'ab_refresh';
@@ -86,9 +86,9 @@ export async function createSession(
 ): Promise<string> {
   const id = nanoid(40);
   const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
-  db.insert(schema.sessions)
+  await db.insert(schema.sessions)
     .values({ id, userId, expiresAt, isMfaComplete: options?.isMfaComplete ?? true })
-    .run();
+    .execute();
   return id;
 }
 
@@ -100,15 +100,15 @@ function createRefreshTokenValue(): string {
   return randomBytes(32).toString('hex');
 }
 
-export function createRefreshToken(
+export async function createRefreshToken(
   userId: string,
   options?: { isMfaComplete?: boolean }
-): string {
+): Promise<string> {
   const rawToken = createRefreshTokenValue();
   const tokenHash = hashRefreshToken(rawToken);
   const expiresAt = new Date(Date.now() + REFRESH_TOKEN_TTL_MS);
 
-  db.insert(schema.refreshTokens)
+  await db.insert(schema.refreshTokens)
     .values({
       id: nanoid(40),
       userId,
@@ -116,7 +116,7 @@ export function createRefreshToken(
       expiresAt,
       isMfaComplete: options?.isMfaComplete ?? true
     })
-    .run();
+    .execute();
 
   return rawToken;
 }
@@ -154,7 +154,7 @@ export async function resolveSession(
 ): Promise<{ user: SessionUser | null; pendingUser: SessionUser | null; sessionId: string | null }> {
   if (!sessionId) return { user: null, pendingUser: null, sessionId: null };
 
-  const row = db
+  const rows = await db
     .select({
       sid: schema.sessions.id,
       expiresAt: schema.sessions.expiresAt,
@@ -169,12 +169,14 @@ export async function resolveSession(
     .from(schema.sessions)
     .innerJoin(schema.users, eq(schema.users.id, schema.sessions.userId))
     .where(eq(schema.sessions.id, sessionId))
-    .get();
+    .limit(1);
+
+  const row = rows[0];
 
   if (!row) return { user: null, pendingUser: null, sessionId: null };
 
   if (row.expiresAt.getTime() <= Date.now()) {
-    db.delete(schema.sessions).where(eq(schema.sessions.id, sessionId)).run();
+    await db.delete(schema.sessions).where(eq(schema.sessions.id, sessionId));
     return { user: null, pendingUser: null, sessionId: null };
   }
 
@@ -250,7 +252,7 @@ export async function resolveSessionWithRefresh(
   }
 
   const tokenHash = hashRefreshToken(refreshToken);
-  const tokenRow = db
+  const tokenRows = await db
     .select({
       userId: schema.users.id,
       email: schema.users.email,
@@ -269,7 +271,9 @@ export async function resolveSessionWithRefresh(
         isNull(schema.refreshTokens.revokedAt)
       )
     )
-    .get();
+    .limit(1);
+
+  const tokenRow = tokenRows[0];
 
   if (!tokenRow) {
     return {
@@ -313,37 +317,37 @@ export async function resolveSessionWithRefresh(
 }
 
 export async function destroySession(sessionId: string): Promise<void> {
-  db.delete(schema.sessions).where(eq(schema.sessions.id, sessionId)).run();
+  await db.delete(schema.sessions).where(eq(schema.sessions.id, sessionId));
 }
 
 export async function revokeRefreshToken(refreshToken: string): Promise<void> {
   const tokenHash = hashRefreshToken(refreshToken);
-  db.update(schema.refreshTokens)
+  await db.update(schema.refreshTokens)
     .set({ revokedAt: new Date() })
     .where(
       and(
         eq(schema.refreshTokens.tokenHash, tokenHash),
         isNull(schema.refreshTokens.revokedAt)
       )
-    )
-    .run();
+    );
 }
 
 export async function markSessionMfaComplete(sessionId: string): Promise<void> {
-  const row = db
+  const rows = await db
     .select({ userId: schema.sessions.userId })
     .from(schema.sessions)
     .where(eq(schema.sessions.id, sessionId))
-    .get();
+    .limit(1);
 
-  db.update(schema.sessions)
+  const row = rows[0];
+
+  await db.update(schema.sessions)
     .set({ isMfaComplete: true })
-    .where(eq(schema.sessions.id, sessionId))
-    .run();
+    .where(eq(schema.sessions.id, sessionId));
 
   if (!row) return;
 
-  db.update(schema.refreshTokens)
+  await db.update(schema.refreshTokens)
     .set({ isMfaComplete: true })
     .where(
       and(
@@ -351,30 +355,29 @@ export async function markSessionMfaComplete(sessionId: string): Promise<void> {
         isNull(schema.refreshTokens.revokedAt),
         gt(schema.refreshTokens.expiresAt, new Date())
       )
-    )
-    .run();
+    );
 }
 
-export function reapExpiredSessions(): void {
+export async function reapExpiredSessions(): Promise<number> {
   const now = new Date();
-  db.delete(schema.sessions).where(lt(schema.sessions.expiresAt, now)).run();
-  db.delete(schema.refreshTokens)
+  await db.delete(schema.sessions).where(lt(schema.sessions.expiresAt, now));
+  await db.delete(schema.refreshTokens)
     .where(
       or(lt(schema.refreshTokens.expiresAt, now), isNotNull(schema.refreshTokens.revokedAt))
-    )
-    .run();
-  db.delete(schema.oauthStates).where(lt(schema.oauthStates.expiresAt, now)).run();
+    );
+  await db.delete(schema.oauthStates).where(lt(schema.oauthStates.expiresAt, now));
+
+  // TODO: return exact row counts after full Postgres cutover instrumentation.
+  return 0;
 }
 
 const REAP_INTERVAL_MS = 1000 * 60 * 60; // 1 hour
 
 export function startReapScheduler(): void {
   const timer = setInterval(() => {
-    try {
-      reapExpiredSessions();
-    } catch (err) {
+    reapExpiredSessions().catch((err) => {
       console.warn('[auth/session] Failed to reap expired tokens:', err);
-    }
+    });
   }, REAP_INTERVAL_MS);
   timer.unref();
 }

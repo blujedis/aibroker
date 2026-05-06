@@ -1,12 +1,12 @@
 import { and, desc, eq, gte, inArray, lte, type SQL } from 'drizzle-orm';
-import { db, schema } from '$lib/server/db/index.js';
+import { db, schema } from '$lib/server/db/postgres.js';
 import { resolveRange, type RangeKey } from '$lib/utils/date-range.js';
 import { getVisibleProfileIds, requireUser } from '$lib/server/authz.js';
 import type { PageServerLoad } from './$types';
 
-export const load: PageServerLoad = ({ url, locals }) => {
+export const load: PageServerLoad = async ({ url, locals }) => {
   const actor = requireUser(locals.user);
-  const visibleProfileIds = getVisibleProfileIds(actor);
+  const visibleProfileIds = await getVisibleProfileIds(actor);
 
   const rangeKey = (url.searchParams.get('range') as RangeKey) ?? 'last7';
   const start = url.searchParams.get('start') ?? undefined;
@@ -59,7 +59,7 @@ export const load: PageServerLoad = ({ url, locals }) => {
     }
   }
 
-  const logs = db
+  const logs = await db
     .select({
       id: schema.requestLogs.id,
       createdAt: schema.requestLogs.createdAt,
@@ -79,33 +79,30 @@ export const load: PageServerLoad = ({ url, locals }) => {
     .from(schema.requestLogs)
     .where(and(...conds))
     .orderBy(desc(schema.requestLogs.createdAt))
-    .limit(limit)
-    .all();
+    .limit(limit);
 
   const profiles =
     visibleProfileIds === null
-      ? db.select().from(schema.profiles).all()
-      : db
+      ? await db.select().from(schema.profiles)
+      : await db
         .select()
         .from(schema.profiles)
         .where(
           profileId
             ? eq(schema.profiles.id, profileId)
             : inArray(schema.profiles.id, visibleProfileIds)
-        )
-        .all();
+        );
   const keys =
     visibleProfileIds === null
-      ? db.select().from(schema.virtualKeys).all()
-      : db
+      ? await db.select().from(schema.virtualKeys)
+      : await db
         .select()
         .from(schema.virtualKeys)
         .where(
           profileId
             ? eq(schema.virtualKeys.profileId, profileId)
             : inArray(schema.virtualKeys.profileId, visibleProfileIds)
-        )
-        .all();
+        );
 
   return {
     logs,

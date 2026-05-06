@@ -1,8 +1,8 @@
 import { error } from '@sveltejs/kit';
 import { eq, inArray } from 'drizzle-orm';
-import { db, schema } from '$lib/server/db/index.js';
+import { db, schema } from '$lib/server/db/postgres.js';
 import type { SessionUser } from '$lib/server/auth/session.js';
-import type { User } from '$lib/server/db/schema.js';
+import type { User } from '$lib/server/db/schema.postgres.js';
 
 export function requireUser(user: SessionUser | null): SessionUser {
   if (!user) throw error(401, 'Not authenticated');
@@ -33,29 +33,28 @@ export function requireSuperadmin(user: SessionUser | null): SessionUser {
   return current;
 }
 
-export function getAssignedProfileIds(userId: string): string[] {
-  return db
+export async function getAssignedProfileIds(userId: string): Promise<string[]> {
+  const rows = await db
     .select({ profileId: schema.userProfiles.profileId })
     .from(schema.userProfiles)
-    .where(eq(schema.userProfiles.userId, userId))
-    .all()
-    .map((r) => r.profileId);
+    .where(eq(schema.userProfiles.userId, userId));
+  return rows.map((r) => r.profileId);
 }
 
-export function canAccessProfile(user: SessionUser, profileId: string | null): boolean {
+export async function canAccessProfile(user: SessionUser, profileId: string | null): Promise<boolean> {
   if (user.role === 'admin') return true;
   if (!profileId) return false;
-  const assigned = getAssignedProfileIds(user.id);
+  const assigned = await getAssignedProfileIds(user.id);
   return assigned.includes(profileId);
 }
 
-export function assertCanAccessProfile(user: SessionUser, profileId: string | null): void {
-  if (!canAccessProfile(user, profileId)) {
+export async function assertCanAccessProfile(user: SessionUser, profileId: string | null): Promise<void> {
+  if (!(await canAccessProfile(user, profileId))) {
     throw error(403, 'Profile access denied');
   }
 }
 
-export function getVisibleProfileIds(user: SessionUser): string[] | null {
+export async function getVisibleProfileIds(user: SessionUser): Promise<string[] | null> {
   if (user.role === 'admin') return null;
   return getAssignedProfileIds(user.id);
 }
@@ -99,35 +98,34 @@ export function filterRowsByVisibleProfiles<T extends { profileId: string | null
   return rows.filter((row) => row.profileId !== null && visibleProfileIds.includes(row.profileId));
 }
 
-export function ensureProfileAssignmentsExist(userId: string, profileIds: string[]): void {
-  db.delete(schema.userProfiles).where(eq(schema.userProfiles.userId, userId)).run();
+export async function ensureProfileAssignmentsExist(userId: string, profileIds: string[]): Promise<void> {
+  await db.delete(schema.userProfiles).where(eq(schema.userProfiles.userId, userId));
 
   if (profileIds.length === 0) return;
 
   const distinctProfileIds = [...new Set(profileIds)];
-  const existingProfiles = db
+  const existingProfiles = await db
     .select({ id: schema.profiles.id })
     .from(schema.profiles)
-    .where(inArray(schema.profiles.id, distinctProfileIds))
-    .all();
+    .where(inArray(schema.profiles.id, distinctProfileIds));
 
   if (existingProfiles.length !== distinctProfileIds.length) {
     throw error(400, 'One or more profiles are invalid');
   }
 
-  for (const profileId of distinctProfileIds) {
-    db.insert(schema.userProfiles).values({ userId, profileId }).run();
-  }
+  await db.insert(schema.userProfiles).values(
+    distinctProfileIds.map((profileId) => ({ userId, profileId }))
+  );
 }
 
-export function assertCanLinkOperatorToProfiles(actor: SessionUser, profileIds: string[]): void {
+export async function assertCanLinkOperatorToProfiles(actor: SessionUser, profileIds: string[]): Promise<void> {
   if (actor.role === 'admin') return;
 
   if (actor.role !== 'manager') {
     throw error(403, 'Not allowed to assign profiles');
   }
 
-  const assigned = getAssignedProfileIds(actor.id);
+  const assigned = await getAssignedProfileIds(actor.id);
   for (const profileId of profileIds) {
     if (!assigned.includes(profileId)) {
       throw error(403, 'Managers can only assign operators to their own profiles');

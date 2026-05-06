@@ -8,7 +8,7 @@ import {
   isInvitationExpired,
   isInvitationUsable
 } from '$lib/server/invitations/service.js';
-import { db, schema } from '$lib/server/db/index.js';
+import { db, schema } from '$lib/server/db/postgres.js';
 import { ensureProfileAssignmentsExist } from '$lib/server/authz.js';
 import { createSession, setSessionCookie } from '$lib/server/auth/session.js';
 import {
@@ -18,8 +18,8 @@ import {
 import { getGlobalSettings } from '$lib/server/settings.js';
 import type { Actions, PageServerLoad } from './$types';
 
-function getInvitationState(token: string) {
-  const invitation = findInvitationByToken(token);
+async function getInvitationState(token: string) {
+  const invitation = await findInvitationByToken(token);
 
   if (!invitation) {
     return { valid: false as const, reason: 'invalid' as const, invitation: null };
@@ -44,28 +44,29 @@ function getInvitationState(token: string) {
   return { valid: true as const, reason: null, invitation };
 }
 
-export const load: PageServerLoad = ({ params, locals }) => {
+export const load: PageServerLoad = async ({ params, locals }) => {
   if (locals.user) throw redirect(303, '/dashboard');
   if (locals.pendingUser) {
     throw redirect(303, locals.pendingUser.mfaEnabled ? '/mfa/verify' : '/mfa/setup');
   }
 
-  const result = getInvitationState(params.token);
+  const result = await getInvitationState(params.token);
   if (!result.invitation) {
     return {
       valid: false,
       reason: result.reason,
       invitation: null,
       profile: null,
-      globalMfaEnabled: getGlobalSettings().globalMfaEnabled
+      globalMfaEnabled: (await getGlobalSettings()).globalMfaEnabled
     };
   }
 
-  const profile = db
+  const profileRows = await db
     .select({ id: schema.profiles.id, name: schema.profiles.name })
     .from(schema.profiles)
     .where(eq(schema.profiles.id, result.invitation.profileId))
-    .get();
+    .limit(1);
+  const profile = profileRows[0];
 
   return {
     valid: result.valid,
@@ -78,7 +79,7 @@ export const load: PageServerLoad = ({ params, locals }) => {
       expiresAt: result.invitation.expiresAt
     },
     profile,
-    globalMfaEnabled: getGlobalSettings().globalMfaEnabled
+    globalMfaEnabled: (await getGlobalSettings()).globalMfaEnabled
   };
 };
 
@@ -89,7 +90,7 @@ export const actions: Actions = {
       throw redirect(303, locals.pendingUser.mfaEnabled ? '/mfa/verify' : '/mfa/setup');
     }
 
-    const result = getInvitationState(params.token);
+    const result = await getInvitationState(params.token);
     if (!result.valid || !result.invitation) {
       return fail(400, { error: 'This invitation is no longer valid.' });
     }
@@ -111,21 +112,23 @@ export const actions: Actions = {
       return fail(400, { error: 'Passwords do not match' });
     }
 
-    const existingUser = db
+    const existingUserRows = await db
       .select({ id: schema.users.id })
       .from(schema.users)
       .where(eq(schema.users.email, result.invitation.email))
-      .get();
+      .limit(1);
+    const existingUser = existingUserRows[0];
 
     if (existingUser) {
       return fail(409, { error: 'An account already exists for this email.' });
     }
 
-    const profile = db
+    const profileRows2 = await db
       .select({ id: schema.profiles.id })
       .from(schema.profiles)
       .where(eq(schema.profiles.id, result.invitation.profileId))
-      .get();
+      .limit(1);
+    const profile = profileRows2[0];
 
     if (!profile) {
       return fail(404, { error: 'The assigned profile no longer exists.' });
@@ -134,7 +137,7 @@ export const actions: Actions = {
     const userId = nanoid();
     const passwordHash = await hashPassword(password);
 
-    db.insert(schema.users)
+    await db.insert(schema.users)
       .values({
         id: userId,
         email: result.invitation.email,
@@ -144,13 +147,12 @@ export const actions: Actions = {
         isSuperadmin: false,
         createdByUserId: result.invitation.role === 'operator' ? result.invitation.invitedByUserId : null,
         mfaEnabled: false
-      })
-      .run();
+      });
 
-    ensureProfileAssignmentsExist(userId, [result.invitation.profileId]);
-    acceptInvitation(result.invitation.id, userId);
+    await ensureProfileAssignmentsExist(userId, [result.invitation.profileId]);
+    await acceptInvitation(result.invitation.id, userId);
 
-    const { globalMfaEnabled } = getGlobalSettings();
+    const { globalMfaEnabled } = await getGlobalSettings();
     const userMfaEnabled = false;
     const sessionId = await createSession(userId, {
       isMfaComplete: shouldMarkSessionMfaComplete({ globalMfaEnabled, userMfaEnabled })

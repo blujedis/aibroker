@@ -1,7 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { and, eq, isNull } from 'drizzle-orm';
 import { nanoid } from 'nanoid';
-import { db, schema } from '$lib/server/db/index.js';
+import { db, schema } from '$lib/server/db/postgres.js';
 
 const DEFAULT_RECOVERY_CODE_COUNT = 10;
 
@@ -27,28 +27,26 @@ export function generateRecoveryCodes(count = DEFAULT_RECOVERY_CODE_COUNT): stri
   return [...out];
 }
 
-export function replaceRecoveryCodesForUser(userId: string, count = DEFAULT_RECOVERY_CODE_COUNT): string[] {
+export async function replaceRecoveryCodesForUser(userId: string, count = DEFAULT_RECOVERY_CODE_COUNT): Promise<string[]> {
   const codes = generateRecoveryCodes(count);
 
-  db.delete(schema.mfaRecoveryCodes).where(eq(schema.mfaRecoveryCodes.userId, userId)).run();
+  await db.delete(schema.mfaRecoveryCodes).where(eq(schema.mfaRecoveryCodes.userId, userId));
 
   if (codes.length === 0) return codes;
 
-  db.insert(schema.mfaRecoveryCodes)
-    .values(
-      codes.map((code) => ({
-        id: nanoid(),
-        userId,
-        codeHash: hashRecoveryCode(code)
-      }))
-    )
-    .run();
+  await db.insert(schema.mfaRecoveryCodes).values(
+    codes.map((code) => ({
+      id: nanoid(),
+      userId,
+      codeHash: hashRecoveryCode(code)
+    }))
+  );
 
   return codes;
 }
 
-export function hasActiveRecoveryCodes(userId: string): boolean {
-  const row = db
+export async function hasActiveRecoveryCodes(userId: string): Promise<boolean> {
+  const rows = await db
     .select({ id: schema.mfaRecoveryCodes.id })
     .from(schema.mfaRecoveryCodes)
     .where(
@@ -57,15 +55,15 @@ export function hasActiveRecoveryCodes(userId: string): boolean {
         isNull(schema.mfaRecoveryCodes.usedAt)
       )
     )
-    .get();
+    .limit(1);
 
-  return Boolean(row);
+  return rows.length > 0;
 }
 
-export function consumeRecoveryCode(userId: string, code: string): boolean {
+export async function consumeRecoveryCode(userId: string, code: string): Promise<boolean> {
   const codeHash = hashRecoveryCode(code);
 
-  const row = db
+  const rows = await db
     .select({ id: schema.mfaRecoveryCodes.id, codeHash: schema.mfaRecoveryCodes.codeHash })
     .from(schema.mfaRecoveryCodes)
     .where(
@@ -75,18 +73,18 @@ export function consumeRecoveryCode(userId: string, code: string): boolean {
         isNull(schema.mfaRecoveryCodes.usedAt)
       )
     )
-    .get();
+    .limit(1);
 
+  const row = rows[0];
   if (!row) return false;
 
   const expected = Buffer.from(codeHash, 'hex');
   const actual = Buffer.from(row.codeHash, 'hex');
   if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) return false;
 
-  db.update(schema.mfaRecoveryCodes)
+  await db.update(schema.mfaRecoveryCodes)
     .set({ usedAt: new Date() })
-    .where(eq(schema.mfaRecoveryCodes.id, row.id))
-    .run();
+    .where(eq(schema.mfaRecoveryCodes.id, row.id));
 
   return true;
 }

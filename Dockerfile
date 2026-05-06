@@ -1,23 +1,32 @@
-# Node version
-FROM node:20-alpine
+# Use official Node.js image
+FROM node:24-alpine AS builder
 
-# Set the working directory inside the container
-WORKDIR /usr/src/app
-
-# Copy package files first to leverage Docker's cache
+WORKDIR /app
 COPY package*.json ./
 
-# Install dependencies (omit dev dependencies for production)
-RUN npm install --omit=dev
+# Run a clean install
+RUN npm ci --only=production
 
-# Copy the rest of your application code
+# Copy all files.
 COPY . .
 
-# Expose the port your app runs on
+# Build your app if needed (e.g. Next.js, Vite, etc.)
+RUN npm run build
+
+# Production stage
+FROM node:24-alpine
+
+WORKDIR /app
+
+# Vite bundles production output to "build" folder.
+# This ensures that npm start points to the correct path.
+COPY --from=builder /app/build ./build
+COPY --from=builder /app/package*.json ./
+
+# Port the project is accessible on
 EXPOSE 4000
 
-# 7. Use a non-root user for security
+# Use a non-root user for security
 USER node
 
-# Start the application
-CMD ["node", "build/index.js"]
+CMD ["npm", "start"]

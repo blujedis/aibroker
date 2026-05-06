@@ -1,5 +1,5 @@
-import { and, count, eq, gte, lte, sql, sum } from 'drizzle-orm';
-import { db, schema } from './db/index.js';
+import { and, count, gte, lte, sql, sum } from 'drizzle-orm';
+import { db, schema } from './db/postgres.js';
 import type { Range } from '$lib/utils/date-range.js';
 
 export interface CostBreakdownTotals {
@@ -35,8 +35,8 @@ export interface UsagePoint extends CostBreakdownTotals {
   outputTokens: number;
 }
 
-export function usageSummary(range: Range): UsageSummary {
-  const rows = db
+export async function usageSummary(range: Range): Promise<UsageSummary> {
+  const summaryRows = await db
     .select({
       total: count(schema.requestLogs.id),
       inputTokens: sum(schema.requestLogs.inputTokens),
@@ -58,10 +58,10 @@ export function usageSummary(range: Range): UsageSummary {
         gte(schema.requestLogs.createdAt, range.start),
         lte(schema.requestLogs.createdAt, range.end)
       )
-    )
-    .get();
+    );
+  const rows = summaryRows[0];
 
-  const byStatus = db
+  const byStatus = await db
     .select({
       status: schema.requestLogs.status,
       n: count(schema.requestLogs.id)
@@ -73,8 +73,7 @@ export function usageSummary(range: Range): UsageSummary {
         lte(schema.requestLogs.createdAt, range.end)
       )
     )
-    .groupBy(schema.requestLogs.status)
-    .all();
+    .groupBy(schema.requestLogs.status);
 
   const success = byStatus.find((r) => r.status === 'success')?.n ?? 0;
   const failed = byStatus.find((r) => r.status === 'failed')?.n ?? 0;
@@ -103,10 +102,11 @@ export function usageSummary(range: Range): UsageSummary {
   };
 }
 
-export function usageSeries(range: Range): UsagePoint[] {
-  const rows = db
+export async function usageSeries(range: Range): Promise<UsagePoint[]> {
+  const dayExpr = sql<string>`to_char(date_trunc('day', ${schema.requestLogs.createdAt}), 'YYYY-MM-DD')`;
+  const rows = await db
     .select({
-      day: sql<string>`date(${schema.requestLogs.createdAt} / 1000, 'unixepoch')`,
+      day: dayExpr,
       requests: count(schema.requestLogs.id),
       successes: sql<number>`sum(case when ${schema.requestLogs.status} = 'success' then 1 else 0 end)`,
       failures: sql<number>`sum(case when ${schema.requestLogs.status} = 'failed' then 1 else 0 end)`,
@@ -130,9 +130,8 @@ export function usageSeries(range: Range): UsagePoint[] {
         lte(schema.requestLogs.createdAt, range.end)
       )
     )
-    .groupBy(sql`date(${schema.requestLogs.createdAt} / 1000, 'unixepoch')`)
-    .orderBy(sql`date(${schema.requestLogs.createdAt} / 1000, 'unixepoch')`)
-    .all();
+    .groupBy(dayExpr)
+    .orderBy(dayExpr);
 
   return rows.map((r) => ({
     day: r.day,
@@ -162,8 +161,8 @@ export interface ModelUsageRow {
   outputTokens: number;
 }
 
-export function usageByModel(range: Range): ModelUsageRow[] {
-  const rows = db
+export async function usageByModel(range: Range): Promise<ModelUsageRow[]> {
+  const rows = await db
     .select({
       modelPublicId: schema.requestLogs.modelPublicId,
       requests: count(schema.requestLogs.id),
@@ -178,8 +177,7 @@ export function usageByModel(range: Range): ModelUsageRow[] {
         lte(schema.requestLogs.createdAt, range.end)
       )
     )
-    .groupBy(schema.requestLogs.modelPublicId)
-    .all();
+    .groupBy(schema.requestLogs.modelPublicId);
   return rows.map((r) => ({
     modelPublicId: r.modelPublicId ?? 'unknown',
     requests: Number(r.requests ?? 0),
@@ -202,8 +200,8 @@ export interface GuardrailSummary {
   avgLatencyMs: number;
 }
 
-export function guardrailSummary(range: Range): GuardrailSummary[] {
-  const rows = db
+export async function guardrailSummary(range: Range): Promise<GuardrailSummary[]> {
+  const rows = await db
     .select({
       guardrailId: schema.guardrailLogs.guardrailId,
       guardrailName: schema.guardrailLogs.guardrailName,
@@ -224,8 +222,7 @@ export function guardrailSummary(range: Range): GuardrailSummary[] {
       schema.guardrailLogs.guardrailId,
       schema.guardrailLogs.guardrailName,
       schema.guardrailLogs.stage
-    )
-    .all();
+    );
   return rows.map((r) => ({
     guardrailId: r.guardrailId,
     guardrailName: r.guardrailName,
@@ -244,10 +241,11 @@ export interface GuardrailPoint {
   redacts: number;
 }
 
-export function guardrailSeries(range: Range): GuardrailPoint[] {
-  const rows = db
+export async function guardrailSeries(range: Range): Promise<GuardrailPoint[]> {
+  const dayExpr = sql<string>`to_char(date_trunc('day', ${schema.guardrailLogs.createdAt}), 'YYYY-MM-DD')`;
+  const rows = await db
     .select({
-      day: sql<string>`date(${schema.guardrailLogs.createdAt} / 1000, 'unixepoch')`,
+      day: dayExpr,
       runs: count(schema.guardrailLogs.id),
       blocks: sql<number>`sum(case when ${schema.guardrailLogs.action} = 'block' then 1 else 0 end)`,
       redacts: sql<number>`sum(case when ${schema.guardrailLogs.action} = 'redact' then 1 else 0 end)`
@@ -259,9 +257,8 @@ export function guardrailSeries(range: Range): GuardrailPoint[] {
         lte(schema.guardrailLogs.createdAt, range.end)
       )
     )
-    .groupBy(sql`date(${schema.guardrailLogs.createdAt} / 1000, 'unixepoch')`)
-    .orderBy(sql`date(${schema.guardrailLogs.createdAt} / 1000, 'unixepoch')`)
-    .all();
+    .groupBy(dayExpr)
+    .orderBy(dayExpr);
   return rows.map((r) => ({
     day: r.day,
     runs: Number(r.runs ?? 0),
@@ -277,8 +274,8 @@ export interface ProfileUsageRow {
   cost: number;
 }
 
-export function usageByProfile(range: Range): ProfileUsageRow[] {
-  const rows = db
+export async function usageByProfile(range: Range): Promise<ProfileUsageRow[]> {
+  const rows = await db
     .select({
       profileId: schema.requestLogs.profileId,
       profileName: schema.requestLogs.profileName,
@@ -292,8 +289,7 @@ export function usageByProfile(range: Range): ProfileUsageRow[] {
         lte(schema.requestLogs.createdAt, range.end)
       )
     )
-    .groupBy(schema.requestLogs.profileId, schema.requestLogs.profileName)
-    .all();
+    .groupBy(schema.requestLogs.profileId, schema.requestLogs.profileName);
   return rows.map((r) => ({
     profileId: r.profileId,
     profileName: r.profileName ?? 'unknown',

@@ -2,7 +2,7 @@ import { fail, redirect } from '@sveltejs/kit';
 import { and, eq, inArray, or } from 'drizzle-orm';
 import { nanoid } from 'nanoid';
 import { hashPassword } from '$lib/server/auth/password.js';
-import { db, schema } from '$lib/server/db/index.js';
+import { db, schema } from '$lib/server/db/postgres.js';
 import { destroySession, clearSessionCookie } from '$lib/server/auth/session.js';
 import { getGlobalSettings } from '$lib/server/settings.js';
 import {
@@ -39,17 +39,18 @@ function canMutateInvitation(
   return actor.role === 'admin' || invitation.invitedByUserId === actor.id;
 }
 
-function getProfileById(profileId: string) {
-  return db.select().from(schema.profiles).where(eq(schema.profiles.id, profileId)).get();
+async function getProfileById(profileId: string) {
+  const rows = await db.select().from(schema.profiles).where(eq(schema.profiles.id, profileId)).limit(1);
+  return rows[0];
 }
 
-export const load: PageServerLoad = ({ locals }) => {
+export const load: PageServerLoad = async ({ locals }) => {
   const actor = requireUser(locals.user);
   if (actor.role === 'operator') throw redirect(303, '/profile');
 
   const users =
     actor.role === 'admin'
-      ? db
+      ? await db
         .select({
           id: schema.users.id,
           email: schema.users.email,
@@ -62,8 +63,7 @@ export const load: PageServerLoad = ({ locals }) => {
           updatedAt: schema.users.updatedAt
         })
         .from(schema.users)
-        .all()
-      : db
+      : await db
         .select({
           id: schema.users.id,
           email: schema.users.email,
@@ -81,29 +81,26 @@ export const load: PageServerLoad = ({ locals }) => {
             eq(schema.users.id, actor.id),
             and(eq(schema.users.role, 'operator'), eq(schema.users.createdByUserId, actor.id))
           )
-        )
-        .all();
+        );
 
   const userIds = users.map((u) => u.id);
   const assignments =
     userIds.length > 0
-      ? db
+      ? await db
         .select()
         .from(schema.userProfiles)
         .where(inArray(schema.userProfiles.userId, userIds))
-        .all()
       : [];
 
   const identities =
     userIds.length > 0
-      ? db
+      ? await db
         .select({
           userId: schema.userIdentities.userId,
           provider: schema.userIdentities.provider
         })
         .from(schema.userIdentities)
         .where(inArray(schema.userIdentities.userId, userIds))
-        .all()
       : [];
 
   const assignmentByUser = new Map<string, string[]>();
@@ -120,22 +117,21 @@ export const load: PageServerLoad = ({ locals }) => {
     identitiesByUser.set(identity.userId, row);
   }
 
-  const profiles = (() => {
-    if (actor.role === 'admin') return db.select().from(schema.profiles).all();
-    const visibleProfileIds = getAssignedProfileIds(actor.id);
+  const profiles = await (async () => {
+    if (actor.role === 'admin') return await db.select().from(schema.profiles);
+    const visibleProfileIds = await getAssignedProfileIds(actor.id);
     if (visibleProfileIds.length === 0) return [];
-    return db
+    return await db
       .select()
       .from(schema.profiles)
-      .where(inArray(schema.profiles.id, visibleProfileIds))
-      .all();
+      .where(inArray(schema.profiles.id, visibleProfileIds));
   })();
 
-  const invitations = listVisibleInvitations(actor)
+  const invitations = (await listVisibleInvitations(actor))
     .slice()
     .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
 
-  const { globalMfaEnabled } = getGlobalSettings();
+  const { globalMfaEnabled } = await getGlobalSettings();
 
   return {
     actor,
@@ -170,27 +166,28 @@ export const actions: Actions = {
       return fail(403, { error: 'You are not allowed to invite this role' });
     }
 
-    const profile = getProfileById(profileId);
+    const profile = await getProfileById(profileId);
     if (!profile) return fail(404, { error: 'Profile not found' });
 
     if (actor.role === 'manager') {
-      assertCanLinkOperatorToProfiles(actor, [profileId]);
+      await assertCanLinkOperatorToProfiles(actor, [profileId]);
     }
 
-    const existingUser = db
+    const existingUserRows = await db
       .select({ id: schema.users.id })
       .from(schema.users)
       .where(eq(schema.users.email, email))
-      .get();
+      .limit(1);
+    const existingUser = existingUserRows[0];
 
     if (existingUser) return fail(409, { error: 'Email is already in use' });
 
-    const existingInvite = findActiveInvitationByEmail(email);
+    const existingInvite = await findActiveInvitationByEmail(email);
     if (existingInvite) {
       return fail(409, { error: 'An active invitation already exists for this email' });
     }
 
-    const invitation = createInvitation({
+    const invitation = await createInvitation({
       email,
       role,
       profileId,
@@ -209,7 +206,7 @@ export const actions: Actions = {
         customMessage
       });
     } catch (error) {
-      revokeInvitation(invitation.id);
+      await revokeInvitation(invitation.id);
       return fail(500, {
         error: error instanceof Error ? error.message : 'Failed to send invitation email'
       });
@@ -226,22 +223,23 @@ export const actions: Actions = {
     const id = String(form.get('id') ?? '').trim();
     if (!id) return fail(400, { error: 'Missing invitation id' });
 
-    const invitation = db
+    const invitationRows = await db
       .select()
       .from(schema.userInvitations)
       .where(eq(schema.userInvitations.id, id))
-      .get();
+      .limit(1);
+    const invitation = invitationRows[0];
 
     if (!invitation) return fail(404, { error: 'Invitation not found' });
     if (!canMutateInvitation(actor, invitation)) return fail(403, { error: 'Not allowed' });
     if (invitation.acceptedAt) return fail(400, { error: 'Accepted invitations cannot be resent' });
     if (invitation.revokedAt) return fail(400, { error: 'Revoked invitations cannot be resent' });
 
-    const profile = getProfileById(invitation.profileId);
+    const profile = await getProfileById(invitation.profileId);
     if (!profile) return fail(404, { error: 'Profile not found' });
 
-    revokeInvitation(invitation.id);
-    const replacement = createInvitation({
+    await revokeInvitation(invitation.id);
+    const replacement = await createInvitation({
       email: invitation.email,
       role: invitation.role,
       profileId: invitation.profileId,
@@ -260,7 +258,7 @@ export const actions: Actions = {
         customMessage: invitation.customMessage
       });
     } catch (error) {
-      revokeInvitation(replacement.id);
+      await revokeInvitation(replacement.id);
       return fail(500, {
         error: error instanceof Error ? error.message : 'Failed to resend invitation email'
       });
@@ -277,18 +275,19 @@ export const actions: Actions = {
     const id = String(form.get('id') ?? '').trim();
     if (!id) return fail(400, { error: 'Missing invitation id' });
 
-    const invitation = db
+    const invitationRows = await db
       .select()
       .from(schema.userInvitations)
       .where(eq(schema.userInvitations.id, id))
-      .get();
+      .limit(1);
+    const invitation = invitationRows[0];
 
     if (!invitation) return fail(404, { error: 'Invitation not found' });
     if (!canMutateInvitation(actor, invitation)) return fail(403, { error: 'Not allowed' });
     if (invitation.acceptedAt) return fail(400, { error: 'Accepted invitations cannot be revoked' });
     if (invitation.revokedAt) return fail(400, { error: 'Invitation already revoked' });
 
-    revokeInvitation(invitation.id);
+    await revokeInvitation(invitation.id);
     return { ok: true };
   },
 
@@ -315,38 +314,37 @@ export const actions: Actions = {
     }
 
     if (role === 'operator' && actor.role === 'manager') {
-      assertCanLinkOperatorToProfiles(actor, profileIds);
+      await assertCanLinkOperatorToProfiles(actor, profileIds);
     }
 
     if ((role === 'manager' || role === 'operator') && actor.role === 'admin' && profileIds.length === 0) {
       return fail(400, { error: 'At least one profile assignment is required for managers/operators' });
     }
 
-    const existing = db
+    const existingRows = await db
       .select({ id: schema.users.id })
       .from(schema.users)
       .where(eq(schema.users.email, email))
-      .get();
+      .limit(1);
+    const existing = existingRows[0];
 
     if (existing) return fail(409, { error: 'Email is already in use' });
 
     const id = nanoid();
     const passwordHash = await hashPassword(password);
 
-    db.insert(schema.users)
-      .values({
-        id,
-        name,
-        email,
-        passwordHash,
-        role,
-        createdByUserId: role === 'operator' ? actor.id : null,
-        isSuperadmin: false
-      })
-      .run();
+    await db.insert(schema.users).values({
+      id,
+      name,
+      email,
+      passwordHash,
+      role,
+      createdByUserId: role === 'operator' ? actor.id : null,
+      isSuperadmin: false
+    });
 
     if (role === 'operator' || role === 'manager') {
-      ensureProfileAssignmentsExist(id, profileIds);
+      await ensureProfileAssignmentsExist(id, profileIds);
     }
 
     return { ok: true };
@@ -359,11 +357,12 @@ export const actions: Actions = {
     const id = String(form.get('id') ?? '');
     if (!id) return fail(400, { error: 'Missing user id' });
 
-    const target = db
+    const targetRows = await db
       .select()
       .from(schema.users)
       .where(eq(schema.users.id, id))
-      .get();
+      .limit(1);
+    const target = targetRows[0];
 
     if (!target) return fail(404, { error: 'User not found' });
     if (!canMutateTarget(actor, target)) return fail(403, { error: 'Not allowed' });
@@ -412,10 +411,10 @@ export const actions: Actions = {
       patch.passwordHash = await hashPassword(password);
     }
 
-    db.update(schema.users).set(patch).where(eq(schema.users.id, id)).run();
+    await db.update(schema.users).set(patch).where(eq(schema.users.id, id));
 
     if (patch.mfaEnabled === false) {
-      db.delete(schema.mfaRecoveryCodes).where(eq(schema.mfaRecoveryCodes.userId, id)).run();
+      await db.delete(schema.mfaRecoveryCodes).where(eq(schema.mfaRecoveryCodes.userId, id));
     }
 
     if (actor.role === 'admin' && (nextRole === 'manager' || nextRole === 'operator')) {
@@ -423,7 +422,7 @@ export const actions: Actions = {
       if (profileIds.length === 0) {
         return fail(400, { error: 'At least one profile assignment is required for managers/operators' });
       }
-      ensureProfileAssignmentsExist(id, profileIds);
+      await ensureProfileAssignmentsExist(id, profileIds);
     }
 
     return { ok: true };
@@ -436,11 +435,12 @@ export const actions: Actions = {
     if (!id) return fail(400, { error: 'Missing user id' });
     if (id === actor.id) return fail(400, { error: 'You cannot delete your own account' });
 
-    const target = db
+    const targetRows = await db
       .select()
       .from(schema.users)
       .where(eq(schema.users.id, id))
-      .get();
+      .limit(1);
+    const target = targetRows[0];
 
     if (!target) return fail(404, { error: 'User not found' });
     if (!canMutateTarget(actor, target)) return fail(403, { error: 'Not allowed' });
@@ -448,7 +448,7 @@ export const actions: Actions = {
       return fail(403, { error: 'Only superadmin can delete admin users' });
     }
 
-    db.delete(schema.users).where(eq(schema.users.id, id)).run();
+    await db.delete(schema.users).where(eq(schema.users.id, id));
     return { ok: true };
   },
 
@@ -456,31 +456,31 @@ export const actions: Actions = {
     const actor = requireUser(locals.user);
     if (!locals.sessionId) return fail(401, { error: 'Not authenticated' });
 
-    const { globalMfaEnabled } = getGlobalSettings();
+    const { globalMfaEnabled } = await getGlobalSettings();
     if (globalMfaEnabled) return fail(400, { error: 'MFA is globally enforced and cannot be changed.' });
 
-    const user = db
+    const userRows = await db
       .select({ mfaEnabled: schema.users.mfaEnabled })
       .from(schema.users)
       .where(eq(schema.users.id, actor.id))
-      .get();
+      .limit(1);
+    const user = userRows[0];
 
     if (!user) return fail(404, { error: 'User not found' });
 
     const newMfaEnabled = !user.mfaEnabled;
 
-    db.update(schema.users)
+    await db.update(schema.users)
       .set({
         mfaEnabled: newMfaEnabled,
         mfaSecret: newMfaEnabled ? undefined : null,
         mfaEnrolledAt: newMfaEnabled ? undefined : null,
         updatedAt: new Date()
       })
-      .where(eq(schema.users.id, actor.id))
-      .run();
+      .where(eq(schema.users.id, actor.id));
 
     if (!newMfaEnabled) {
-      db.delete(schema.mfaRecoveryCodes).where(eq(schema.mfaRecoveryCodes.userId, actor.id)).run();
+      await db.delete(schema.mfaRecoveryCodes).where(eq(schema.mfaRecoveryCodes.userId, actor.id));
     }
 
     await destroySession(locals.sessionId);

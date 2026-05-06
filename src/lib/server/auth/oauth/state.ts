@@ -1,7 +1,7 @@
 import { randomBytes } from 'crypto';
 import { generateCodeVerifier, generateState } from 'arctic';
 import { eq, lt } from 'drizzle-orm';
-import { db, schema } from '$lib/server/db/index.js';
+import { db, schema } from '$lib/server/db/postgres.js';
 
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
@@ -15,47 +15,45 @@ export interface OAuthStateRow {
   expiresAt: Date;
 }
 
-export function createOAuthState(
+export async function createOAuthState(
   provider: string,
   intent: 'login' | 'link',
   actorUserId?: string
-): { state: string; codeVerifier: string } {
+): Promise<{ state: string; codeVerifier: string }> {
   const id = randomBytes(16).toString('hex');
   const state = generateState();
   const codeVerifier = generateCodeVerifier();
   const expiresAt = new Date(Date.now() + OAUTH_STATE_TTL_MS);
 
-  db.insert(schema.oauthStates)
-    .values({
-      id,
-      state,
-      codeVerifier,
-      provider,
-      intent,
-      actorUserId: actorUserId ?? null,
-      expiresAt,
-      consumedAt: null
-    })
-    .run();
+  await db.insert(schema.oauthStates).values({
+    id,
+    state,
+    codeVerifier,
+    provider,
+    intent,
+    actorUserId: actorUserId ?? null,
+    expiresAt,
+    consumedAt: null
+  });
 
   return { state, codeVerifier };
 }
 
-export function consumeOAuthState(state: string): OAuthStateRow | null {
-  const row = db
+export async function consumeOAuthState(state: string): Promise<OAuthStateRow | null> {
+  const rows = await db
     .select()
     .from(schema.oauthStates)
     .where(eq(schema.oauthStates.state, state))
-    .get();
+    .limit(1);
 
+  const row = rows[0];
   if (!row) return null;
   if (row.consumedAt !== null) return null; // already consumed
   if (row.expiresAt.getTime() < Date.now()) return null; // expired
 
-  db.update(schema.oauthStates)
+  await db.update(schema.oauthStates)
     .set({ consumedAt: new Date() })
-    .where(eq(schema.oauthStates.id, row.id))
-    .run();
+    .where(eq(schema.oauthStates.id, row.id));
 
   return {
     id: row.id,
@@ -68,8 +66,7 @@ export function consumeOAuthState(state: string): OAuthStateRow | null {
   };
 }
 
-export function reapExpiredOAuthStates(): void {
-  db.delete(schema.oauthStates)
-    .where(lt(schema.oauthStates.expiresAt, new Date()))
-    .run();
+export async function reapExpiredOAuthStates(): Promise<void> {
+  await db.delete(schema.oauthStates)
+    .where(lt(schema.oauthStates.expiresAt, new Date()));
 }

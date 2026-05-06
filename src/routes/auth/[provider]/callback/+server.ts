@@ -2,7 +2,7 @@ import { redirect, error } from '@sveltejs/kit';
 import { nanoid } from 'nanoid';
 import { randomBytes } from 'crypto';
 import { eq } from 'drizzle-orm';
-import { db, schema } from '$lib/server/db/index.js';
+import { db, schema } from '$lib/server/db/postgres.js';
 import { consumeOAuthState } from '$lib/server/auth/oauth/state.js';
 import { findIdentity, linkIdentity } from '$lib/server/auth/oauth/identity.js';
 import { exchangeGoogleCode } from '$lib/server/auth/oauth/google.js';
@@ -48,7 +48,7 @@ export const GET: RequestHandler = async ({ params, url, cookies, locals }) => {
   }
 
   // Validate and consume state (CSRF protection)
-  const stateRow = consumeOAuthState(stateParam);
+  const stateRow = await consumeOAuthState(stateParam);
   if (!stateRow) {
     throw error(400, 'Invalid or expired OAuth state');
   }
@@ -78,12 +78,12 @@ export const GET: RequestHandler = async ({ params, url, cookies, locals }) => {
       throw error(400, 'No actor for link intent');
     }
     // Prevent linking an identity already attached to another account
-    const existing = findIdentity(provider, providerUserId);
+    const existing = await findIdentity(provider, providerUserId);
     if (existing && existing.userId !== actorUserId) {
       throw redirect(303, '/profile?oauth_error=already_linked_other');
     }
     if (!existing) {
-      linkIdentity(actorUserId, provider, providerUserId, email);
+      await linkIdentity(actorUserId, provider, providerUserId, email);
     }
     throw redirect(303, '/profile?linked=1');
   }
@@ -92,28 +92,29 @@ export const GET: RequestHandler = async ({ params, url, cookies, locals }) => {
 
   // 1. Already linked identity → sign in
   let resolvedUserId: string | null = null;
-  const identityRow = findIdentity(provider, providerUserId);
+  const identityRow = await findIdentity(provider, providerUserId);
   if (identityRow) {
     resolvedUserId = identityRow.userId;
   }
 
   // 2. Existing local user with matching email → auto-link
   if (!resolvedUserId) {
-    const localUser = db
+    const localUserRows = await db
       .select({ id: schema.users.id })
       .from(schema.users)
       .where(eq(schema.users.email, email.toLowerCase()))
-      .get();
+      .limit(1);
+    const localUser = localUserRows[0];
 
     if (localUser) {
-      linkIdentity(localUser.id, provider, providerUserId, email);
+      await linkIdentity(localUser.id, provider, providerUserId, email);
       resolvedUserId = localUser.id;
     }
   }
 
   // 3. Active invitation for this email → create user + link
   if (!resolvedUserId) {
-    const invitation = findActiveInvitationByEmail(email);
+    const invitation = await findActiveInvitationByEmail(email);
     if (!invitation) {
       // No invitation → access denied
       throw redirect(303, '/login?oauth_error=no_invitation');
@@ -123,7 +124,7 @@ export const GET: RequestHandler = async ({ params, url, cookies, locals }) => {
     // OAuth users have no password — store an unusable sentinel value
     const unusablePasswordHash = `$oauth_only$${randomBytes(32).toString('hex')}`;
 
-    db.insert(schema.users)
+    await db.insert(schema.users)
       .values({
         id: userId,
         email: email.toLowerCase(),
@@ -133,36 +134,36 @@ export const GET: RequestHandler = async ({ params, url, cookies, locals }) => {
         isSuperadmin: false,
         createdByUserId: invitation.invitedByUserId,
         mfaEnabled: false
-      })
-      .run();
+      });
 
-    ensureProfileAssignmentsExist(userId, [invitation.profileId]);
-    acceptInvitation(invitation.id, userId);
-    linkIdentity(userId, provider, providerUserId, email);
+    await ensureProfileAssignmentsExist(userId, [invitation.profileId]);
+    await acceptInvitation(invitation.id, userId);
+    await linkIdentity(userId, provider, providerUserId, email);
 
     resolvedUserId = userId;
   }
 
   // Verify the user record still exists (safety check)
-  const user = db
+  const userRows = await db
     .select({
       id: schema.users.id,
       mfaEnabled: schema.users.mfaEnabled
     })
     .from(schema.users)
     .where(eq(schema.users.id, resolvedUserId))
-    .get();
+    .limit(1);
+  const user = userRows[0];
 
   if (!user) {
     throw error(500, 'User record not found after OAuth resolution');
   }
 
-  const { globalMfaEnabled } = getGlobalSettings();
+  const { globalMfaEnabled } = await getGlobalSettings();
   const userMfaEnabled = Boolean(user.mfaEnabled);
   const isMfaComplete = shouldMarkSessionMfaComplete({ globalMfaEnabled, userMfaEnabled });
 
   const sessionId = await createSession(user.id, { isMfaComplete });
-  const refreshToken = createRefreshToken(user.id, { isMfaComplete });
+  const refreshToken = await createRefreshToken(user.id, { isMfaComplete });
 
   setSessionCookie(cookies, sessionId);
   setRefreshTokenCookie(cookies, refreshToken);

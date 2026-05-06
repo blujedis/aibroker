@@ -1,6 +1,6 @@
 import { fail } from '@sveltejs/kit';
 import { eq } from 'drizzle-orm';
-import { db, schema } from '$lib/server/db/index.js';
+import { db, schema } from '$lib/server/db/postgres.js';
 import {
   createPasswordResetToken,
   getPasswordResetExpiryHours
@@ -23,15 +23,16 @@ export const actions: Actions = {
     if (!email) return fail(400, { error: 'Email is required' });
 
     // Always return the same success-like response to prevent email enumeration.
-    const user = db
+    const userRows = await db
       .select({ id: schema.users.id })
       .from(schema.users)
       .where(eq(schema.users.email, email))
-      .get();
+      .limit(1);
+    const user = userRows[0];
 
     if (user) {
       try {
-        const rawToken = createPasswordResetToken(user.id);
+        const rawToken = await createPasswordResetToken(user.id);
         const resetUrl = buildPasswordResetUrl(rawToken, url.origin);
         await sendPasswordResetEmail({
           to: email,

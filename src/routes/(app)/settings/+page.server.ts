@@ -6,9 +6,9 @@ import { requireAdmin, requireSuperadmin } from '$lib/server/authz.js';
 import { getGlobalSettings, setGlobalMfaEnabled } from '$lib/server/settings.js';
 import type { Actions, PageServerLoad } from './$types';
 
-export const load: PageServerLoad = ({ locals }) => {
+export const load: PageServerLoad = async ({ locals }) => {
   const user = requireAdmin(locals.user);
-  const settings = getGlobalSettings();
+  const settings = await getGlobalSettings();
 
   return {
     user,
@@ -29,9 +29,9 @@ export const load: PageServerLoad = ({ locals }) => {
 };
 
 export const actions: Actions = {
-  reapSessions: ({ locals }) => {
+  reapSessions: async ({ locals }) => {
     requireAdmin(locals.user);
-    const n = reapExpiredSessions();
+    const n = await reapExpiredSessions();
     return { ok: true, reaped: n };
   },
   catalogUpload: async ({ request, locals }) => {
@@ -46,14 +46,14 @@ export const actions: Actions = {
     } catch (err) {
       return fail(400, { error: `Invalid JSON: ${(err as Error).message}` });
     }
-    const result = ingestCatalog(parsed);
+    const result = await ingestCatalog(parsed);
     return { ok: true, catalog: result };
   },
   setGlobalMfa: async ({ request, locals }) => {
     requireSuperadmin(locals.user);
     const form = await request.formData();
     const enabled = String(form.get('enabled') ?? '') === 'on';
-    setGlobalMfaEnabled(enabled);
+    await setGlobalMfaEnabled(enabled);
     return { ok: true, globalMfaEnabled: enabled };
   }
 };

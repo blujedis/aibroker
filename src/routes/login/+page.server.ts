@@ -1,6 +1,6 @@
 import { fail, redirect, type Actions } from '@sveltejs/kit';
 import { eq } from 'drizzle-orm';
-import { db, schema } from '$lib/server/db/index.js';
+import { db, schema } from '$lib/server/db/postgres.js';
 import { verifyPassword } from '$lib/server/auth/password.js';
 import {
   createRefreshToken,
@@ -33,13 +33,14 @@ export const actions: Actions = {
     if (!email || !password)
       return fail(400, { email, error: 'Email and password are required' });
 
-    const user = db.select().from(schema.users).where(eq(schema.users.email, email)).get();
+    const users = await db.select().from(schema.users).where(eq(schema.users.email, email)).limit(1);
+    const user = users[0];
     if (!user) return fail(401, { email, error: 'Invalid credentials' });
 
     const ok = await verifyPassword(user.passwordHash, password);
     if (!ok) return fail(401, { email, error: 'Invalid credentials' });
 
-    const { globalMfaEnabled } = getGlobalSettings();
+    const { globalMfaEnabled } = await getGlobalSettings();
     const userMfaEnabled = Boolean(user.mfaEnabled);
     const destination = getPostLoginDestination({
       globalMfaEnabled,
@@ -51,7 +52,7 @@ export const actions: Actions = {
     const sid = await createSession(user.id, {
       isMfaComplete
     });
-    const refreshToken = createRefreshToken(user.id, { isMfaComplete });
+    const refreshToken = await createRefreshToken(user.id, { isMfaComplete });
 
     setSessionCookie(cookies, sid);
     setRefreshTokenCookie(cookies, refreshToken);

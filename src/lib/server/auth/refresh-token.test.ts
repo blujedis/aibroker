@@ -8,7 +8,7 @@ import { nanoid } from 'nanoid';
  * The mock factory is hoisted by vitest before any static imports resolve,
  * which ensures that session.ts picks up the in-memory db when it is loaded.
  */
-vi.mock('$lib/server/db/index.js', async () => {
+vi.mock('$lib/server/db/postgres.js', async () => {
   const Database = (await import('better-sqlite3')).default;
   const { drizzle } = await import('drizzle-orm/better-sqlite3');
   const schemaModule = await import('$lib/server/db/schema.js');
@@ -62,11 +62,12 @@ vi.mock('$lib/server/db/index.js', async () => {
   return {
     db: drizzle(sqlite, { schema: schemaModule }),
     schema: schemaModule,
+    pgClient: { end: async () => { } },
   };
 });
 
 // These imports resolve after the mock is registered — they receive the in-memory db.
-import { db, schema } from '$lib/server/db/index.js';
+import { db, schema } from '$lib/server/db/postgres.js';
 import {
   createRefreshToken,
   createSession,
@@ -75,6 +76,8 @@ import {
   revokeRefreshToken,
 } from './session.js';
 
+const anyDb = db as any;
+
 // ---------------------------------------------------------------------------
 // Test helpers
 // ---------------------------------------------------------------------------
@@ -82,7 +85,7 @@ import {
 const TEST_USER_ID = 'test-user-001';
 
 function seedUser(overrides: { mfaEnabled?: boolean } = {}) {
-  db.insert(schema.users)
+  anyDb.insert(schema.users)
     .values({
       id: TEST_USER_ID,
       email: 'test@example.com',
@@ -102,7 +105,7 @@ function seedUser(overrides: { mfaEnabled?: boolean } = {}) {
 function insertExpiredToken(userId: string): string {
   const raw = `expired-${nanoid(8)}`;
   const hash = createHash('sha256').update(raw).digest('hex');
-  db.insert(schema.refreshTokens)
+  anyDb.insert(schema.refreshTokens)
     .values({
       id: nanoid(20),
       userId,
@@ -116,9 +119,9 @@ function insertExpiredToken(userId: string): string {
 
 beforeEach(() => {
   // Delete in dependency order to respect FK constraints.
-  db.delete(schema.refreshTokens).run();
-  db.delete(schema.sessions).run();
-  db.delete(schema.users).run();
+  anyDb.delete(schema.refreshTokens).run();
+  anyDb.delete(schema.sessions).run();
+  anyDb.delete(schema.users).run();
   seedUser();
 });
 
@@ -128,7 +131,7 @@ beforeEach(() => {
 
 describe('resolveSessionWithRefresh', () => {
   it('returns user from active session without touching refresh token', async () => {
-    const rawToken = createRefreshToken(TEST_USER_ID, { isMfaComplete: true });
+    const rawToken = await createRefreshToken(TEST_USER_ID, { isMfaComplete: true });
     const sid = await createSession(TEST_USER_ID, { isMfaComplete: true });
 
     const result = await resolveSessionWithRefresh(sid, rawToken);
@@ -141,7 +144,7 @@ describe('resolveSessionWithRefresh', () => {
   });
 
   it('silently re-authenticates (silent refresh) when session is absent', async () => {
-    const rawToken = createRefreshToken(TEST_USER_ID, { isMfaComplete: true });
+    const rawToken = await createRefreshToken(TEST_USER_ID, { isMfaComplete: true });
 
     const result = await resolveSessionWithRefresh(null, rawToken);
 
@@ -153,7 +156,7 @@ describe('resolveSessionWithRefresh', () => {
   });
 
   it('preserves pending-MFA state on silent refresh', async () => {
-    const rawToken = createRefreshToken(TEST_USER_ID, { isMfaComplete: false });
+    const rawToken = await createRefreshToken(TEST_USER_ID, { isMfaComplete: false });
 
     const result = await resolveSessionWithRefresh(null, rawToken);
 
@@ -177,7 +180,7 @@ describe('resolveSessionWithRefresh', () => {
   });
 
   it('returns no user and clears cookie when refresh token is revoked', async () => {
-    const rawToken = createRefreshToken(TEST_USER_ID, { isMfaComplete: true });
+    const rawToken = await createRefreshToken(TEST_USER_ID, { isMfaComplete: true });
     await revokeRefreshToken(rawToken);
 
     const result = await resolveSessionWithRefresh(null, rawToken);
@@ -214,9 +217,9 @@ describe('resolveSessionWithRefresh', () => {
 
 describe('revokeRefreshToken', () => {
   it('marks the token row as revoked', async () => {
-    const rawToken = createRefreshToken(TEST_USER_ID, { isMfaComplete: true });
+    const rawToken = await createRefreshToken(TEST_USER_ID, { isMfaComplete: true });
 
-    const before = db
+    const before = anyDb
       .select({ revokedAt: schema.refreshTokens.revokedAt })
       .from(schema.refreshTokens)
       .all();
@@ -224,7 +227,7 @@ describe('revokeRefreshToken', () => {
 
     await revokeRefreshToken(rawToken);
 
-    const after = db
+    const after = anyDb
       .select({ revokedAt: schema.refreshTokens.revokedAt })
       .from(schema.refreshTokens)
       .all();
@@ -232,18 +235,18 @@ describe('revokeRefreshToken', () => {
   });
 
   it('is idempotent — revoking an already-revoked token does not throw', async () => {
-    const rawToken = createRefreshToken(TEST_USER_ID, { isMfaComplete: true });
+    const rawToken = await createRefreshToken(TEST_USER_ID, { isMfaComplete: true });
     await revokeRefreshToken(rawToken);
     await expect(revokeRefreshToken(rawToken)).resolves.toBeUndefined();
   });
 
   it('does not affect unrelated tokens', async () => {
-    const rawA = createRefreshToken(TEST_USER_ID, { isMfaComplete: true });
-    const rawB = createRefreshToken(TEST_USER_ID, { isMfaComplete: true });
+    const rawA = await createRefreshToken(TEST_USER_ID, { isMfaComplete: true });
+    const rawB = await createRefreshToken(TEST_USER_ID, { isMfaComplete: true });
 
     await revokeRefreshToken(rawA);
 
-    const rows = db
+    const rows = anyDb
       .select({ tokenHash: schema.refreshTokens.tokenHash, revokedAt: schema.refreshTokens.revokedAt })
       .from(schema.refreshTokens)
       .all();
@@ -251,8 +254,8 @@ describe('revokeRefreshToken', () => {
     const hashA = createHash('sha256').update(rawA).digest('hex');
     const hashB = createHash('sha256').update(rawB).digest('hex');
 
-    const rowA = rows.find((r) => r.tokenHash === hashA);
-    const rowB = rows.find((r) => r.tokenHash === hashB);
+    const rowA = rows.find((r: { tokenHash: string; revokedAt: Date | null }) => r.tokenHash === hashA);
+    const rowB = rows.find((r: { tokenHash: string; revokedAt: Date | null }) => r.tokenHash === hashB);
 
     expect(rowA?.revokedAt).not.toBeNull();
     expect(rowB?.revokedAt).toBeNull();
@@ -264,9 +267,9 @@ describe('revokeRefreshToken', () => {
 // ---------------------------------------------------------------------------
 
 describe('reapExpiredSessions', () => {
-  it('removes expired sessions', () => {
+  it('removes expired sessions', async () => {
     // Insert an expired session directly.
-    db.insert(schema.sessions)
+    anyDb.insert(schema.sessions)
       .values({
         id: 'expired-session-001',
         userId: TEST_USER_ID,
@@ -275,50 +278,50 @@ describe('reapExpiredSessions', () => {
       })
       .run();
 
-    reapExpiredSessions();
+    await reapExpiredSessions();
 
-    const rows = db.select().from(schema.sessions).all();
+    const rows = anyDb.select().from(schema.sessions).all();
     expect(rows).toHaveLength(0);
   });
 
-  it('removes expired refresh tokens', () => {
+  it('removes expired refresh tokens', async () => {
     insertExpiredToken(TEST_USER_ID);
 
-    reapExpiredSessions();
+    await reapExpiredSessions();
 
-    const rows = db.select().from(schema.refreshTokens).all();
+    const rows = anyDb.select().from(schema.refreshTokens).all();
     expect(rows).toHaveLength(0);
   });
 
   it('removes revoked refresh tokens even if they have not expired', async () => {
-    const rawToken = createRefreshToken(TEST_USER_ID, { isMfaComplete: true });
+    const rawToken = await createRefreshToken(TEST_USER_ID, { isMfaComplete: true });
     await revokeRefreshToken(rawToken);
 
-    reapExpiredSessions();
+    await reapExpiredSessions();
 
-    const rows = db.select().from(schema.refreshTokens).all();
+    const rows = anyDb.select().from(schema.refreshTokens).all();
     expect(rows).toHaveLength(0);
   });
 
   it('keeps valid sessions and non-revoked tokens', async () => {
     await createSession(TEST_USER_ID, { isMfaComplete: true });
-    createRefreshToken(TEST_USER_ID, { isMfaComplete: true });
+    await createRefreshToken(TEST_USER_ID, { isMfaComplete: true });
 
-    reapExpiredSessions();
+    await reapExpiredSessions();
 
-    const sessions = db.select().from(schema.sessions).all();
-    const tokens = db.select().from(schema.refreshTokens).all();
+    const sessions = anyDb.select().from(schema.sessions).all();
+    const tokens = anyDb.select().from(schema.refreshTokens).all();
     expect(sessions).toHaveLength(1);
     expect(tokens).toHaveLength(1);
   });
 
   it('removes expired while keeping valid in the same run', async () => {
     insertExpiredToken(TEST_USER_ID);
-    createRefreshToken(TEST_USER_ID, { isMfaComplete: true });
+    await createRefreshToken(TEST_USER_ID, { isMfaComplete: true });
 
-    reapExpiredSessions();
+    await reapExpiredSessions();
 
-    const rows = db.select().from(schema.refreshTokens).all();
+    const rows = anyDb.select().from(schema.refreshTokens).all();
     expect(rows).toHaveLength(1);
     expect(rows[0].revokedAt).toBeNull();
   });

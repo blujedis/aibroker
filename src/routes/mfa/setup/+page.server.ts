@@ -1,7 +1,7 @@
 import { fail, redirect } from '@sveltejs/kit';
 import { eq } from 'drizzle-orm';
 import QRCode from 'qrcode';
-import { db, schema } from '$lib/server/db/index.js';
+import { db, schema } from '$lib/server/db/postgres.js';
 import {
   decryptTotpSecret,
   encryptTotpSecret,
@@ -18,7 +18,7 @@ export const load: PageServerLoad = async ({ locals }) => {
   if (locals.user) throw redirect(303, '/dashboard');
   if (!locals.pendingUser || !locals.sessionId) throw redirect(303, '/login');
 
-  const user = db
+  const userRows = await db
     .select({
       id: schema.users.id,
       email: schema.users.email,
@@ -27,7 +27,8 @@ export const load: PageServerLoad = async ({ locals }) => {
     })
     .from(schema.users)
     .where(eq(schema.users.id, locals.pendingUser.id))
-    .get();
+    .limit(1);
+  const user = userRows[0];
 
   if (!user) throw redirect(303, '/login');
 
@@ -43,10 +44,9 @@ export const load: PageServerLoad = async ({ locals }) => {
   let secret = user.mfaSecret ? decryptTotpSecret(user.mfaSecret) : '';
   if (!secret) {
     secret = generateTotpSecret();
-    db.update(schema.users)
+    await db.update(schema.users)
       .set({ mfaSecret: encryptTotpSecret(secret), updatedAt: new Date() })
-      .where(eq(schema.users.id, user.id))
-      .run();
+      .where(eq(schema.users.id, user.id));
   }
 
   const otpauth = toOtpAuthUri(user.email, secret);
@@ -77,11 +77,12 @@ export const actions: Actions = {
     const token = String(form.get('token') ?? '').trim();
     if (!token) return fail(400, { error: 'Authenticator code is required' });
 
-    const user = db
+    const userRows = await db
       .select({ id: schema.users.id, mfaSecret: schema.users.mfaSecret })
       .from(schema.users)
       .where(eq(schema.users.id, locals.pendingUser.id))
-      .get();
+      .limit(1);
+    const user = userRows[0];
 
     if (!user?.mfaSecret) return fail(400, { error: 'MFA setup is incomplete' });
 
@@ -89,12 +90,11 @@ export const actions: Actions = {
     const valid = verifyTotpToken(plainSecret, token);
     if (!valid) return fail(400, { error: 'Invalid authenticator code' });
 
-    db.update(schema.users)
+    await db.update(schema.users)
       .set({ mfaEnabled: true, mfaEnrolledAt: new Date(), updatedAt: new Date() })
-      .where(eq(schema.users.id, user.id))
-      .run();
+      .where(eq(schema.users.id, user.id));
 
-    const recoveryCodes = replaceRecoveryCodesForUser(user.id);
+    const recoveryCodes = await replaceRecoveryCodesForUser(user.id);
 
     await markSessionMfaComplete(locals.sessionId);
     return {

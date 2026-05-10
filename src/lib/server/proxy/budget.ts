@@ -1,4 +1,4 @@
-import type { Frequency } from '../db/schema.js';
+import type { Frequency } from '../db/schema.postgres.js';
 
 /** Returns the inclusive start of the current budget window, in epoch ms. */
 export function windowStart(freq: Frequency | null | undefined, now = new Date()): number | null {
@@ -20,5 +20,7 @@ export function windowStart(freq: Frequency | null | undefined, now = new Date()
     case 'monthly':
       d.setDate(1);
       return d.getTime();
+    default:
+      return null;
   }
 }

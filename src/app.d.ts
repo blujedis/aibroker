@@ -1,4 +1,5 @@
 import type { SessionUser } from "$lib/server/auth/session";
+import type { ServerLogger } from "$lib/server/observability/logger";
 
 declare global {
   namespace App {
@@ -6,6 +7,8 @@ declare global {
       user: SessionUser | null;
       pendingUser: SessionUser | null;
       sessionId: string | null;
+      requestId: string;
+      logger: ServerLogger;
     }
     interface PageData {
       user?: SessionUser | null;

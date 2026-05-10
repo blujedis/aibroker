@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { enhance } from "$app/forms";
+  import { enhance } from '$app/forms';
+  import { toast } from 'svelte-sonner';
   import {
     Button,
     Input,
@@ -15,16 +16,17 @@
     TagsInput,
     ConfirmDialog,
     type ComboboxItem,
-  } from "$lib/components/ui";
-  import { Trash2, Pencil, Plus } from "@lucide/svelte";
+  } from '$lib/components/ui';
+  import { Trash2, Pencil, Plus } from '@lucide/svelte';
 
   let { data, form } = $props();
+  let lastToastSignature = $state('');
 
   // ───── Backend form state ─────
   interface BackendDraft {
     id: string | null;
     name: string;
-    kind: "openai" | "anthropic" | "custom";
+    kind: 'openai' | 'anthropic' | 'custom';
     baseUrl: string;
     apiKey: string;
     profileId: string;
@@ -32,11 +34,11 @@
   }
   const emptyBackend = (): BackendDraft => ({
     id: null,
-    name: "",
-    kind: "openai",
-    baseUrl: "",
-    apiKey: "",
-    profileId: "",
+    name: '',
+    kind: 'openai',
+    baseUrl: '',
+    apiKey: '',
+    profileId: '',
     enabled: true,
   });
   let backendDraft = $state<BackendDraft>(emptyBackend());
@@ -56,8 +58,8 @@
       name: b.name,
       kind: b.kind,
       baseUrl: b.baseUrl,
-      apiKey: "",
-      profileId: b.profileId ?? "",
+      apiKey: '',
+      profileId: b.profileId ?? '',
       enabled: b.enabled,
     };
     backendProviderPick = null;
@@ -71,8 +73,8 @@
     const p = data.accessibleProviders.find((x) => x.name === item.value);
     if (!p) return;
     backendDraft.name = p.name;
-    backendDraft.kind = (p.kind as BackendDraft["kind"]) ?? "openai";
-    backendDraft.baseUrl = p.baseUrl ?? "";
+    backendDraft.kind = (p.kind as BackendDraft['kind']) ?? 'openai';
+    backendDraft.baseUrl = p.baseUrl ?? '';
   }
 
   // ───── Model form state ─────
@@ -109,19 +111,19 @@
   }
   const emptyModel = (): ModelDraft => ({
     id: null,
-    publicId: "",
-    displayName: "",
-    backendId: data.backends[0]?.id ?? "",
-    upstreamId: "",
+    publicId: '',
+    displayName: '',
+    backendId: data.backends[0]?.id ?? '',
+    upstreamId: '',
     enabled: true,
     supportsStreaming: true,
-    type: "chat",
-    description: "",
-    releaseDate: "",
-    websiteUrl: "",
-    modelUrl: "",
-    pricingUrl: "",
-    playgroundUrl: "",
+    type: 'chat',
+    description: '',
+    releaseDate: '',
+    websiteUrl: '',
+    modelUrl: '',
+    pricingUrl: '',
+    playgroundUrl: '',
     contextSize: null,
     maxOutputTokens: null,
     hasZdrProvider: false,
@@ -140,13 +142,13 @@
   });
   let modelDraft = $state<ModelDraft>(emptyModel());
   let modelPick = $state<string | null>(null);
-  let tagsJson = $state("[]");
+  let tagsJson = $state('[]');
   let confirmBackendDeleteOpen = $state(false);
   let confirmModelDeleteOpen = $state(false);
   let backendDeleteId: string | null = $state(null);
   let modelDeleteId: string | null = $state(null);
-  let backendDeleteName = $state("");
-  let modelDeleteName = $state("");
+  let backendDeleteName = $state('');
+  let modelDeleteName = $state('');
   let backendDeleteFormEl: HTMLFormElement | null = null;
   let modelDeleteFormEl: HTMLFormElement | null = null;
 
@@ -167,13 +169,13 @@
       upstreamId: m.upstreamId,
       enabled: m.enabled,
       supportsStreaming: m.supportsStreaming,
-      type: m.type ?? "chat",
-      description: m.description ?? "",
-      releaseDate: m.releaseDate ?? "",
-      websiteUrl: m.websiteUrl ?? "",
-      modelUrl: m.modelUrl ?? "",
-      pricingUrl: m.pricingUrl ?? "",
-      playgroundUrl: m.playgroundUrl ?? "",
+      type: m.type ?? 'chat',
+      description: m.description ?? '',
+      releaseDate: m.releaseDate ?? '',
+      websiteUrl: m.websiteUrl ?? '',
+      modelUrl: m.modelUrl ?? '',
+      pricingUrl: m.pricingUrl ?? '',
+      playgroundUrl: m.playgroundUrl ?? '',
       contextSize: m.contextSize ?? null,
       maxOutputTokens: m.maxOutputTokens ?? null,
       hasZdrProvider: !!m.hasZdrProvider,
@@ -198,8 +200,8 @@
   }
   function safeTags(s: string): string[] {
     try {
-      const arr = JSON.parse(s ?? "[]");
-      return Array.isArray(arr) ? arr.filter((x) => typeof x === "string") : [];
+      const arr = JSON.parse(s ?? '[]');
+      return Array.isArray(arr) ? arr.filter((x) => typeof x === 'string') : [];
     } catch {
       return [];
     }
@@ -211,13 +213,13 @@
     modelDraft.publicId ||= m.slug;
     modelDraft.upstreamId ||= m.slug;
     modelDraft.displayName = m.displayName;
-    modelDraft.type = m.type ?? "chat";
-    modelDraft.description = m.description ?? "";
-    modelDraft.releaseDate = m.releaseDate ?? "";
-    modelDraft.websiteUrl = m.websiteUrl ?? "";
-    modelDraft.modelUrl = m.modelUrl ?? "";
-    modelDraft.pricingUrl = m.pricingUrl ?? "";
-    modelDraft.playgroundUrl = m.playgroundUrl ?? "";
+    modelDraft.type = m.type ?? 'chat';
+    modelDraft.description = m.description ?? '';
+    modelDraft.releaseDate = m.releaseDate ?? '';
+    modelDraft.websiteUrl = m.websiteUrl ?? '';
+    modelDraft.modelUrl = m.modelUrl ?? '';
+    modelDraft.pricingUrl = m.pricingUrl ?? '';
+    modelDraft.playgroundUrl = m.playgroundUrl ?? '';
     modelDraft.contextSize = m.contextSize ?? null;
     modelDraft.maxOutputTokens = m.maxOutputTokens ?? null;
     modelDraft.hasZdrProvider = !!m.hasZdrProvider;
@@ -260,15 +262,15 @@
   }
 
   const priceFields: { key: keyof ModelDraft; label: string }[] = [
-    { key: "inputPricePerMTokens", label: "Input" },
-    { key: "outputPricePerMTokens", label: "Output" },
-    { key: "cachedInputPricePerMTokens", label: "Cached input" },
-    { key: "imageInputPricePerMTokens", label: "Image input" },
-    { key: "audioInputPricePerMTokens", label: "Audio input" },
-    { key: "videoInputPricePerMTokens", label: "Video input" },
-    { key: "imagePricePerMTokens", label: "Image output" },
-    { key: "videoPricePerMTokens", label: "Video output" },
-    { key: "webSearchCallPricePerMTokens", label: "Web search call" },
+    { key: 'inputPricePerMTokens', label: 'Input' },
+    { key: 'outputPricePerMTokens', label: 'Output' },
+    { key: 'cachedInputPricePerMTokens', label: 'Cached input' },
+    { key: 'imageInputPricePerMTokens', label: 'Image input' },
+    { key: 'audioInputPricePerMTokens', label: 'Audio input' },
+    { key: 'videoInputPricePerMTokens', label: 'Video input' },
+    { key: 'imagePricePerMTokens', label: 'Image output' },
+    { key: 'videoPricePerMTokens', label: 'Video output' },
+    { key: 'webSearchCallPricePerMTokens', label: 'Web search call' },
   ];
 
   const backendSelectItems = $derived(
@@ -286,8 +288,8 @@
   });
 
   function scopeLabel(profileId: string | null | undefined): string {
-    if (!profileId) return "Global";
-    return profileNameById.get(profileId) ?? "Profile-scoped";
+    if (!profileId) return 'Global';
+    return profileNameById.get(profileId) ?? 'Profile-scoped';
   }
 
   function backendScopeLabel(backendId: string): string {
@@ -299,8 +301,25 @@
 
   const backendDraftLabel = $derived(
     backendSelectItems.find((b) => b.value === modelDraft.backendId)?.label ??
-      "Select backend...",
+      'Select backend...',
   );
+
+  $effect(() => {
+    if (!form || typeof form !== 'object') return;
+    const payload = form as Record<string, unknown>;
+    const signature = JSON.stringify(payload);
+    if (signature === lastToastSignature) return;
+    lastToastSignature = signature;
+
+    if (typeof payload.error === 'string' && payload.error) {
+      toast.error(payload.error);
+      return;
+    }
+
+    if (payload.ok) {
+      toast.success('Model/backend changes saved.');
+    }
+  });
 </script>
 
 <ConfirmDialog
@@ -326,7 +345,7 @@
   class="hidden"
   bind:this={backendDeleteFormEl}
 >
-  <input type="hidden" name="id" value={backendDeleteId ?? ""} />
+  <input type="hidden" name="id" value={backendDeleteId ?? ''} />
 </form>
 
 <form
@@ -336,7 +355,7 @@
   class="hidden"
   bind:this={modelDeleteFormEl}
 >
-  <input type="hidden" name="id" value={modelDeleteId ?? ""} />
+  <input type="hidden" name="id" value={modelDeleteId ?? ''} />
 </form>
 
 <div class="space-y-8">
@@ -381,7 +400,7 @@
               <td>{b.name}</td>
               <td><Badge variant="outline">{b.kind}</Badge></td>
               <td>
-                <Badge variant={b.profileId ? "default" : "outline"}>
+                <Badge variant={b.profileId ? 'default' : 'outline'}>
                   {scopeLabel(b.profileId)}
                 </Badge>
               </td>
@@ -415,11 +434,11 @@
 
       <form
         method="POST"
-        action={backendDraft.id ? "?/backendUpdate" : "?/backendCreate"}
+        action={backendDraft.id ? '?/backendUpdate' : '?/backendCreate'}
         use:enhance={() =>
           async ({ update }) => {
             await update({ reset: false });
-            if (!form || !("error" in form)) resetBackend();
+            if (!form || !('error' in form)) resetBackend();
           }}
         class="grid gap-4 md:grid-cols-2"
       >
@@ -486,7 +505,7 @@
         </div>
         <div class="md:col-span-2">
           <Label for="backend-apikey"
-            >API key {backendDraft.id ? "(leave blank to keep)" : ""}</Label
+            >API key {backendDraft.id ? '(leave blank to keep)' : ''}</Label
           >
           <Input
             id="backend-apikey"
@@ -509,7 +528,7 @@
         <div class="md:col-span-2">
           <Button type="submit">
             <Plus class="h-4 w-4 mr-1" />
-            {backendDraft.id ? "Save backend" : "Add backend"}
+            {backendDraft.id ? 'Save backend' : 'Add backend'}
           </Button>
         </div>
       </form>
@@ -551,9 +570,9 @@
                 <div class="font-medium">{m.publicId}</div>
                 <div class="text-xs text-muted-foreground">{m.displayName}</div>
               </td>
-              <td>{m.backendName ?? "—"}</td>
+              <td>{m.backendName ?? '—'}</td>
               <td>
-                <Badge variant={m.backendProfileId ? "default" : "outline"}>
+                <Badge variant={m.backendProfileId ? 'default' : 'outline'}>
                   {scopeLabel(m.backendProfileId)}
                 </Badge>
               </td>
@@ -588,11 +607,11 @@
 
       <form
         method="POST"
-        action={modelDraft.id ? "?/modelUpdate" : "?/modelCreate"}
+        action={modelDraft.id ? '?/modelUpdate' : '?/modelCreate'}
         use:enhance={() =>
           async ({ update }) => {
             await update({ reset: false });
-            if (!form || !("error" in form)) resetModel();
+            if (!form || !('error' in form)) resetModel();
           }}
         class="space-y-6"
       >
@@ -817,7 +836,7 @@
         <div>
           <Button type="submit">
             <Plus class="h-4 w-4 mr-1" />
-            {modelDraft.id ? "Save model" : "Add model"}
+            {modelDraft.id ? 'Save model' : 'Add model'}
           </Button>
         </div>
       </form>

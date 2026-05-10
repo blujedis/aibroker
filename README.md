@@ -7,7 +7,7 @@ Built with **Node.js**, **TypeScript**, **SvelteKit 2 (Svelte 5 runes)**, **Tail
 ## Features
 
 - OpenAI-compatible endpoints: `POST /v1/chat/completions` (streaming + non-streaming), `GET /v1/models`
-- Parallel request handling with a configurable upstream concurrency limit
+- Parallel request handling with configurable per-backend concurrency and upstream timeouts
 - **Client profiles** with optional global `daily` / `weekly` / `monthly` / unlimited budgets
 - **Virtual API keys** tied to a profile, with their own budgets and optional model allow-lists
 - Profile-scoped resources with global fallback for backends, guardrails, MCP servers, and skills
@@ -51,6 +51,14 @@ pnpm db:migrate
 pnpm db:seed
 ```
 
+Development-only database purge helper:
+
+```bash
+NODE_ENV=development ALLOW_DB_PURGE=1 pnpm db:purge
+```
+
+This command requires an interactive confirmation prompt and is blocked unless both safety vars are set.
+
 ## Using the proxy
 
 Once you have configured a backend, a model, a profile, and issued a virtual key, call the proxy exactly like OpenAI:
@@ -92,13 +100,36 @@ Behavior notes:
 
 | Variable | Default | Meaning |
 |---|---|---|
+| `APP_BASE_URL` | `https://yourdomain.com` | Base URL used when building invitation/reset/break-glass links; falls back to request origin/localhost |
+| `PORT` | `5173` | HTTP port for the Node server |
+| `DATABASE_CONNECTION_URL` | `postgresql://postgres:postgres@localhost:5432/aibroker` | Postgres connection string (required at runtime) |
+| `DATABASE_POOL_MAX` | `10` | Max Postgres pooled connections |
+| `DATABASE_IDLE_TIMEOUT_SEC` | `20` | Postgres idle timeout in seconds |
+| `DATABASE_CONNECT_TIMEOUT_SEC` | `10` | Postgres connect timeout in seconds |
 | `BOOTSTRAP_ADMIN_EMAIL` | `admin@local` | Created on first run if no users exist |
 | `BOOTSTRAP_ADMIN_PASSWORD` | `admin` | Password for the bootstrap user |
+| `PASSWORD_PEPPER` | _(empty)_ | Optional extra pepper used by CLI hash/verify helpers |
+| `PASSWORD_RESET_EXPIRY_HOURS` | `1` | Password-reset token lifetime in hours |
 | `SESSION_TTL` | `1h` | Session lifetime; supports `m`, `h`, `d`, `y` (e.g. `90m`, `12h`, `7d`, `1y`) |
 | `REFRESH_TOKEN_TTL` | `30d` | Refresh-token lifetime for silent re-authentication; supports `m`, `h`, `d`, `y` |
 | `MFA_BREAK_GLASS_EXPIRY_MINUTES` | `10` | Expiry window for emailed emergency MFA recovery links |
-| `MAX_CONCURRENT_UPSTREAM` | `32` | Max parallel upstream fetches across the whole server |
+| `MAX_CONCURRENT_PER_BACKEND` | `16` | Max parallel upstream requests per backend |
+| `UPSTREAM_TIMEOUT_MS` | `60000` | Timeout for non-stream upstream calls (ms) |
+| `UPSTREAM_STREAM_TIMEOUT_MS` | `300000` | Timeout for streaming upstream calls (ms) |
+| `AUTH_CACHE_TTL_MS` | `30000` | Auth resolution cache TTL (ms) |
+| `BUDGET_CACHE_TTL_MS` | `5000` | Budget-spend cache TTL (ms) |
+| `INVITE_EXPIRY_HOURS` | `72` | User invitation token lifetime in hours |
+| `GOOGLE_CLIENT_ID` | _(empty)_ | Optional Google OAuth client ID (enable Google sign-in when set with secret + redirect URI) |
+| `GOOGLE_CLIENT_SECRET` | _(empty)_ | Optional Google OAuth client secret |
+| `GOOGLE_OAUTH_REDIRECT_URI` | `http://localhost:5173/auth/google/callback` | Optional Google OAuth callback URL |
+| `MAILGUN_API_KEY` | `...` | Mailgun API key (required only when sending mail) |
+| `MAILGUN_DOMAIN` | `...` | Mailgun domain (required only when sending mail) |
+| `MAILGUN_FROM_EMAIL` | `...` | Mailgun from-address (required only when sending mail) |
+| `MASTER_KEY_SECRET` | `change-me-to-a-long-random-string` | Secret used to encrypt/decrypt stored backend API keys |
+| `ALLOW_DB_PURGE` | _(empty)_ | Safety switch for `pnpm db:purge`; must be `1` and used with `NODE_ENV=development` |
 | `SCOPE_OBSERVABILITY_LOGS` | `1` | Set to `0` to disable structured scope decision logs |
+| `LOG_LEVEL` | `debug` (dev) / `info` (prod) | Minimum structured log level emitted to stdout/stderr |
+| `LOG_REDACT_SENSITIVE` | `1` | Set to `0` to disable automatic redaction of sensitive log fields |
 
 ## Scripts
 
@@ -107,9 +138,26 @@ pnpm dev         # dev server with HMR
 pnpm build       # production build (adapter-node)
 pnpm start       # run the built server
 pnpm check       # svelte-check / tsc
+pnpm db:purge    # purge all data in public schema (development only; requires typed confirmation)
 pnpm test        # alias for unit tests (runs test:unit)
 pnpm test:unit   # vitest unit/action tests
 pnpm test:smoke  # runtime smoke flow checks (requires running dev server)
+```
+
+## Purging development data
+
+The database purge helper intentionally has multiple safeguards:
+
+- It only runs when `NODE_ENV=development`.
+- It requires `ALLOW_DB_PURGE=1`.
+- It requires an interactive terminal and asks you to type `PURGE <database_name>` exactly.
+- It truncates all tables in the `public` schema except `__drizzle_migrations`.
+- It then re-seeds the bootstrap admin only if no users remain.
+
+Example:
+
+```bash
+NODE_ENV=development ALLOW_DB_PURGE=1 pnpm db:purge
 ```
 
 ## Testing
@@ -141,7 +189,7 @@ Smoke tests are intentionally not part of `prebuild` because they depend on a ru
 
 ## Layout
 
-- `src/lib/server/db/` — drizzle schema, bootstrap DDL, seed
+- `src/lib/server/db/` — Postgres client, Drizzle schema, migrations, seed
 - `src/lib/server/auth/` — argon2 password hashing, session cookies
 - `src/lib/server/proxy/` — backend adapter, router, cost, budget, concurrency limit
 - `src/lib/server/guardrails/` — three-stage guardrail engine

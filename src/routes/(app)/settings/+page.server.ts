@@ -18,7 +18,6 @@ export const load: PageServerLoad = async ({ locals }) => {
       UPSTREAM_STREAM_TIMEOUT_MS: process.env.UPSTREAM_STREAM_TIMEOUT_MS ?? '300000',
       BOOTSTRAP_ADMIN_EMAIL: process.env.BOOTSTRAP_ADMIN_EMAIL ?? 'admin@local',
       SESSION_TTL: process.env.SESSION_TTL ?? '30d',
-      DATABASE_DIALECT: process.env.DATABASE_DIALECT ?? 'sqlite',
       INVITE_EXPIRY_HOURS: process.env.INVITE_EXPIRY_HOURS ?? '72',
       MAILGUN_DOMAIN: process.env.MAILGUN_DOMAIN ?? '-',
       MAILGUN_FROM_EMAIL: process.env.MAILGUN_FROM_EMAIL ?? '-'

@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { Check, Pencil, Trash2, X } from "@lucide/svelte";
-  import { enhance } from "$app/forms";
+  import { Check, Pencil, Trash2, X } from '@lucide/svelte';
+  import { enhance } from '$app/forms';
+  import { toast } from 'svelte-sonner';
   import {
     Badge,
     Button,
@@ -13,7 +14,7 @@
     SegmentSwitcher,
     Select,
     Textarea,
-  } from "$lib/components/ui";
+  } from '$lib/components/ui';
 
   let {
     data,
@@ -21,7 +22,7 @@
   }: {
     data: {
       actor: {
-        role: "admin" | "manager" | "operator";
+        role: 'admin' | 'manager' | 'operator';
         isSuperadmin: boolean;
       };
       actorId: string;
@@ -30,7 +31,7 @@
         id: string;
         name: string;
         email: string;
-        role: "admin" | "manager" | "operator";
+        role: 'admin' | 'manager' | 'operator';
         isSuperadmin: boolean;
         profileIds: string[];
         mfaEnabled: boolean;
@@ -40,7 +41,7 @@
       invitations: Array<{
         id: string;
         email: string;
-        role: "admin" | "manager" | "operator";
+        role: 'admin' | 'manager' | 'operator';
         profileId: string;
         expiresAt: string | Date;
         acceptedAt: string | Date | null;
@@ -52,13 +53,13 @@
 
   let editingId = $state<string | null>(null);
   let createFormEl = $state<HTMLFormElement | null>(null);
-  let createRole = $state<"admin" | "manager" | "operator">("operator");
+  let createRole = $state<'admin' | 'manager' | 'operator'>('operator');
   let createPassword = $state(generatePassword());
   let createProfileIds = $state<string[]>([]);
-  let inviteRole = $state<"manager" | "operator">("operator");
-  let inviteEmail = $state("");
-  let inviteProfileId = $state("");
-  let inviteCustomMessage = $state("");
+  let inviteRole = $state<'manager' | 'operator'>('operator');
+  let inviteEmail = $state('');
+  let inviteProfileId = $state('');
+  let inviteCustomMessage = $state('');
   let inviteConfirmOpen = $state(false);
   let inviteFormEl = $state<HTMLFormElement | null>(null);
   let mfaConfirmOpen = $state(false);
@@ -66,22 +67,23 @@
   let editing = $state<{
     name: string;
     email: string;
-    role: "admin" | "manager" | "operator";
+    role: 'admin' | 'manager' | 'operator';
     profileIds: string[];
     mfaEnabled: boolean;
   }>({
-    name: "",
-    email: "",
-    role: "operator",
+    name: '',
+    email: '',
+    role: 'operator',
     profileIds: [],
     mfaEnabled: false,
   });
 
-  const canManageRoles = $derived(data.actor.role === "admin");
+  const canManageRoles = $derived(data.actor.role === 'admin');
 
-  let view = $state<"users" | "invitations">("users");
+  let view = $state<'users' | 'invitations'>('users');
+  let lastToastSignature = $state('');
   const pendingInvitationCount = $derived(
-    data.invitations.filter((inv) => invitationStatus(inv) === "pending")
+    data.invitations.filter((inv) => invitationStatus(inv) === 'pending')
       .length,
   );
 
@@ -99,7 +101,7 @@
     id: string;
     name: string;
     email: string;
-    role: "admin" | "manager" | "operator";
+    role: 'admin' | 'manager' | 'operator';
     profileIds: string[];
     mfaEnabled: boolean;
   }) {
@@ -116,9 +118,9 @@
   function cancelEdit() {
     editingId = null;
     editing = {
-      name: "",
-      email: "",
-      role: "operator",
+      name: '',
+      email: '',
+      role: 'operator',
       profileIds: [],
       mfaEnabled: false,
     };
@@ -138,12 +140,12 @@
 
   function generatePassword(length = 18): string {
     const alphabet =
-      "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%^&*";
+      'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%^&*';
     const bytes = new Uint32Array(length);
     globalThis.crypto.getRandomValues(bytes);
 
     return Array.from(bytes, (value) => alphabet[value % alphabet.length]).join(
-      "",
+      '',
     );
   }
 
@@ -153,15 +155,15 @@
 
   function resetCreateForm() {
     createFormEl?.reset();
-    createRole = "operator";
+    createRole = 'operator';
     createProfileIds = [];
     refreshCreatePassword();
   }
 
   function roleTone(role: string) {
-    if (role === "admin") return "info" as const;
-    if (role === "manager") return "warning" as const;
-    return "outline" as const;
+    if (role === 'admin') return 'info' as const;
+    if (role === 'manager') return 'warning' as const;
+    return 'outline' as const;
   }
 
   // function providerLabel(provider: string): string {
@@ -180,37 +182,54 @@
   }
 
   function formatDateTime(value: string | Date | null | undefined): string {
-    if (!value) return "-";
+    if (!value) return '-';
     const date = value instanceof Date ? value : new Date(value);
-    return Number.isNaN(date.getTime()) ? "-" : date.toLocaleString();
+    return Number.isNaN(date.getTime()) ? '-' : date.toLocaleString();
   }
 
   function invitationStatus(invitation: {
     acceptedAt: string | Date | null;
     revokedAt: string | Date | null;
     expiresAt: string | Date;
-  }): "accepted" | "revoked" | "expired" | "pending" {
-    if (invitation.acceptedAt) return "accepted";
-    if (invitation.revokedAt) return "revoked";
+  }): 'accepted' | 'revoked' | 'expired' | 'pending' {
+    if (invitation.acceptedAt) return 'accepted';
+    if (invitation.revokedAt) return 'revoked';
     const expiresAt =
       invitation.expiresAt instanceof Date
         ? invitation.expiresAt
         : new Date(invitation.expiresAt);
-    return expiresAt.getTime() <= Date.now() ? "expired" : "pending";
+    return expiresAt.getTime() <= Date.now() ? 'expired' : 'pending';
   }
 
   function invitationTone(status: ReturnType<typeof invitationStatus>) {
-    if (status === "accepted") return "default" as const;
-    if (status === "revoked") return "destructive" as const;
-    if (status === "expired") return "warning" as const;
-    return "outline" as const;
+    if (status === 'accepted') return 'default' as const;
+    if (status === 'revoked') return 'destructive' as const;
+    if (status === 'expired') return 'warning' as const;
+    return 'outline' as const;
   }
+
+  $effect(() => {
+    if (!form || typeof form !== 'object') return;
+    const payload = form as Record<string, unknown>;
+    const signature = JSON.stringify(payload);
+    if (signature === lastToastSignature) return;
+    lastToastSignature = signature;
+
+    if (typeof payload.error === 'string' && payload.error) {
+      toast.error(payload.error);
+      return;
+    }
+
+    if (payload.ok) {
+      toast.success('User and invitation changes saved.');
+    }
+  });
 </script>
 
 <svelte:head><title>Users · AiBroker</title></svelte:head>
 
 {#snippet getIcon(name: string)}
-  {#if name === "google"}
+  {#if name === 'google'}
     <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" aria-hidden="true"
       ><path
         d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
@@ -232,18 +251,18 @@
 <ConfirmDialog
   bind:open={inviteConfirmOpen}
   title="Send invitation?"
-  description={`This will send a signup link to ${inviteEmail || "the selected email"}.`}
+  description={`This will send a signup link to ${inviteEmail || 'the selected email'}.`}
   confirmLabel="Send invitation"
   on:confirm={submitInvite}
 >
   {#snippet children()}
     <div class="mt-4 space-y-3 text-sm">
       <div class="rounded-md border border-border bg-muted/40 p-3">
-        <p><strong>Email:</strong> {inviteEmail || "-"}</p>
+        <p><strong>Email:</strong> {inviteEmail || '-'}</p>
         <p><strong>Role:</strong> {inviteRole}</p>
         <p>
           <strong>Profile:</strong>
-          {profileNameById(inviteProfileId) || "-"}
+          {profileNameById(inviteProfileId) || '-'}
         </p>
       </div>
       <div class="space-y-1.5">
@@ -262,11 +281,11 @@
 <ConfirmDialog
   bind:open={mfaConfirmOpen}
   title={editing.mfaEnabled
-    ? "Disable two-factor authentication?"
-    : "Enable two-factor authentication?"}
+    ? 'Disable two-factor authentication?'
+    : 'Enable two-factor authentication?'}
   description={editing.mfaEnabled
-    ? "You will be logged out and must sign in again. MFA will be disabled and you will no longer need a verification code to log in."
-    : "You will be logged out and must sign in again. On your next login you will be guided through the MFA setup process."}
+    ? 'You will be logged out and must sign in again. MFA will be disabled and you will no longer need a verification code to log in.'
+    : 'You will be logged out and must sign in again. On your next login you will be guided through the MFA setup process.'}
   confirmLabel="Continue"
   on:confirm={() => mfaToggleFormEl?.submit()}
   on:cancel={() => (mfaConfirmOpen = false)}
@@ -292,10 +311,10 @@
     <SegmentSwitcher
       bind:value={view}
       options={[
-        { value: "users", label: "Users" },
+        { value: 'users', label: 'Users' },
         {
-          value: "invitations",
-          label: "Invitations",
+          value: 'invitations',
+          label: 'Invitations',
           badge:
             pendingInvitationCount > 0 ? pendingInvitationCount : undefined,
         },
@@ -303,8 +322,8 @@
     />
   </div>
 
-  {#if view === "users"}
-    {#if data.actor.role !== "operator"}
+  {#if view === 'users'}
+    {#if data.actor.role !== 'operator'}
       <Card>
         <CardHeader
           title="Create user"
@@ -317,7 +336,7 @@
             use:enhance={() => {
               return async ({ result, update }) => {
                 await update();
-                if (result.type !== "success") return;
+                if (result.type !== 'success') return;
                 resetCreateForm();
               };
             }}
@@ -363,7 +382,7 @@
               <Select.Root bind:value={createRole} name="role">
                 <Select.Trigger id="create-role">{createRole}</Select.Trigger>
                 <Select.Content>
-                  {#if data.actor.role === "admin"}
+                  {#if data.actor.role === 'admin'}
                     <Select.Item value="operator" />
                     <Select.Item value="manager" />
                     <Select.Item value="admin" />
@@ -405,7 +424,7 @@
                         const val = (e.target as HTMLSelectElement).value;
                         if (val) {
                           toggleCreateProfile(val);
-                          (e.target as HTMLSelectElement).value = "";
+                          (e.target as HTMLSelectElement).value = '';
                         }
                       }}
                     >
@@ -459,7 +478,7 @@
                         use:enhance={() => {
                           return async ({ result, update }) => {
                             await update();
-                            if (result.type !== "success") return;
+                            if (result.type !== 'success') return;
                             cancelEdit();
                           };
                         }}
@@ -521,7 +540,7 @@
                             {/if}
                           </div>
 
-                          {#if data.actor.role === "admin" && data.profiles.length > 0}
+                          {#if data.actor.role === 'admin' && data.profiles.length > 0}
                             <div
                               class="space-y-1.5 {user.isSuperadmin
                                 ? 'opacity-50'
@@ -569,7 +588,7 @@
                                       if (val) {
                                         toggleProfile(val);
                                         (e.target as HTMLSelectElement).value =
-                                          "";
+                                          '';
                                       }
                                     }}
                                   >
@@ -592,7 +611,7 @@
                           {/if}
                         </div>
 
-                        {#if data.actor.role === "admin"}
+                        {#if data.actor.role === 'admin'}
                           <div
                             class="space-y-1.5 {data.globalMfaEnabled
                               ? 'opacity-50'
@@ -669,7 +688,7 @@
                       {/if}
                     </td>
                     <td class="px-3 py-2"
-                      >{user.mfaEnabled ? "Enabled" : "Not enrolled"}</td
+                      >{user.mfaEnabled ? 'Enabled' : 'Not enrolled'}</td
                     >
                     <td class="px-3 py-2">
                       {#if user.linkedProviders.length === 0}
@@ -715,7 +734,7 @@
       </CardContent>
     </Card>
   {:else}
-    {#if data.actor.role !== "operator"}
+    {#if data.actor.role !== 'operator'}
       <Card>
         <CardHeader
           title="Invite user"
@@ -752,7 +771,7 @@
                 <Select.Trigger id="invite-role">{inviteRole}</Select.Trigger>
                 <Select.Content>
                   <Select.Item value="operator" />
-                  {#if data.actor.role === "admin"}
+                  {#if data.actor.role === 'admin'}
                     <Select.Item value="manager" />
                   {/if}
                 </Select.Content>
@@ -765,7 +784,7 @@
                 <Select.Trigger id="invite-profile">
                   {inviteProfileId
                     ? profileNameById(inviteProfileId)
-                    : "Select profile"}
+                    : 'Select profile'}
                 </Select.Trigger>
                 <Select.Content>
                   {#each data.profiles as profile (profile.id)}
@@ -843,7 +862,7 @@
                     >
                     <td class="px-3 py-2 text-right">
                       <div class="inline-flex items-center gap-2">
-                        {#if status === "pending" || status === "expired"}
+                        {#if status === 'pending' || status === 'expired'}
                           <form
                             method="POST"
                             action="?/resendInvite"
@@ -859,7 +878,7 @@
                             >
                           </form>
                         {/if}
-                        {#if status === "pending"}
+                        {#if status === 'pending'}
                           <form
                             method="POST"
                             action="?/revokeInvite"

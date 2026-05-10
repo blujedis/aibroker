@@ -6,14 +6,43 @@
     CardHeader,
     Input,
     Label,
-  } from "$lib/components/ui";
-  import ConfirmDialog from "$lib/components/ui/confirm-dialog.svelte";
-  import { enhance } from "$app/forms";
+  } from '$lib/components/ui';
+  import ConfirmDialog from '$lib/components/ui/confirm-dialog.svelte';
+  import { enhance } from '$app/forms';
+  import { toast } from 'svelte-sonner';
 
   let { data, form } = $props();
+  let lastToastSignature = $state('');
 
   let mfaDialogOpen = $state(false);
   let mfaToggleForm: HTMLFormElement | undefined = $state();
+
+  $effect(() => {
+    if (!form || typeof form !== 'object') return;
+    const payload = form as Record<string, unknown>;
+    const signature = JSON.stringify(payload);
+    if (signature === lastToastSignature) return;
+    lastToastSignature = signature;
+
+    if (typeof payload.error === 'string' && payload.error) {
+      toast.error(payload.error);
+      return;
+    }
+
+    if (payload.profileUpdated) {
+      toast.success('Profile updated.');
+      return;
+    }
+
+    if (payload.ok) {
+      toast.success('Password updated.');
+      return;
+    }
+
+    if (payload.unlinked) {
+      toast.success('Account unlinked.');
+    }
+  });
 </script>
 
 <svelte:head><title>Profile · AiBroker</title></svelte:head>
@@ -35,7 +64,7 @@
       >
         <div class="flex flex-col gap-1.5">
           <Label for="name">Display name</Label>
-          <Input id="name" name="name" required value={data.user?.name ?? ""} />
+          <Input id="name" name="name" required value={data.user?.name ?? ''} />
         </div>
         <div class="flex flex-col gap-1.5">
           <Label for="email">Email</Label>
@@ -44,10 +73,10 @@
             name="email"
             type="email"
             required
-            value={data.user?.email ?? ""}
+            value={data.user?.email ?? ''}
           />
         </div>
-        {#if form && "profileUpdated" in form}
+        {#if form && 'profileUpdated' in form}
           <p class="text-sm text-emerald-500">Profile updated.</p>
         {/if}
         <div><Button type="submit">Save details</Button></div>
@@ -72,9 +101,9 @@
           <Label for="next">New password</Label>
           <Input id="next" name="next" type="password" required minlength={6} />
         </div>
-        {#if form && "error" in form}
+        {#if form && 'error' in form}
           <p class="text-sm text-destructive">{form.error}</p>
-        {:else if form && "ok" in form}
+        {:else if form && 'ok' in form}
           <p class="text-sm text-emerald-500">Password updated.</p>
         {/if}
         <div><Button type="submit">Update password</Button></div>
@@ -108,7 +137,7 @@
           />
           <Label
             for="mfaEnabled"
-            class={data.globalMfaEnabled ? "opacity-50" : ""}
+            class={data.globalMfaEnabled ? 'opacity-50' : ''}
           >
             Enable two-factor authentication
           </Label>
@@ -127,7 +156,7 @@
       <CardHeader title="Linked accounts" />
       <CardContent>
         <div class="grid grid-cols-1 gap-4 md:max-w-md">
-          {#each [{ id: "google", label: "Google" }] as provider}
+          {#each [{ id: 'google', label: 'Google' }] as provider}
             {@const linked = data.linkedIdentities.find(
               (i) => i.provider === provider.id,
             )}
@@ -159,7 +188,7 @@
                   <p class="text-sm font-medium">{provider.label}</p>
                   {#if linked}
                     <p class="text-xs text-muted-foreground">
-                      {linked.providerEmail ?? "Linked"}
+                      {linked.providerEmail ?? 'Linked'}
                     </p>
                   {:else}
                     <p class="text-xs text-muted-foreground">Not linked</p>
@@ -183,7 +212,7 @@
               {/if}
             </div>
           {/each}
-          {#if form && "unlinked" in form}
+          {#if form && 'unlinked' in form}
             <p class="text-sm text-emerald-500">Account unlinked.</p>
           {/if}
         </div>
@@ -195,11 +224,11 @@
 <ConfirmDialog
   bind:open={mfaDialogOpen}
   title={data.user?.mfaEnabled
-    ? "Disable two-factor authentication?"
-    : "Enable two-factor authentication?"}
+    ? 'Disable two-factor authentication?'
+    : 'Enable two-factor authentication?'}
   description={data.user?.mfaEnabled
-    ? "You will be logged out and must sign in again. MFA will be disabled and you will no longer need a verification code to log in."
-    : "You will be logged out and must sign in again. On your next login you will be guided through the MFA setup process."}
+    ? 'You will be logged out and must sign in again. MFA will be disabled and you will no longer need a verification code to log in.'
+    : 'You will be logged out and must sign in again. On your next login you will be guided through the MFA setup process.'}
   confirmLabel="Continue"
   on:confirm={() => mfaToggleForm?.submit()}
   on:cancel={() => (mfaDialogOpen = false)}

@@ -2,8 +2,13 @@ import { hash } from '@node-rs/argon2';
 import { eq } from 'drizzle-orm';
 import { nanoid } from 'nanoid';
 import { db, pgClient, schema } from './postgres.js';
+import { ensureSchemaReady } from './ready.js';
+import { logger } from '../observability/logger.js';
+
+const seedLogger = logger.child({ component: 'db.seed' });
 
 export async function bootstrapAdminIfNeeded(): Promise<void> {
+  await ensureSchemaReady();
   const existing = await db.select({ id: schema.users.id }).from(schema.users).limit(1);
   if (existing.length > 0) return;
 
@@ -22,8 +27,7 @@ export async function bootstrapAdminIfNeeded(): Promise<void> {
     })
     .execute();
 
-  // eslint-disable-next-line no-console
-  console.log(`[aibroker] seeded bootstrap admin '${email}'`);
+  seedLogger.info('db.seed.bootstrap_admin_created', { email });
 }
 
 // Allow `pnpm db:seed` to call this directly.
@@ -34,13 +38,21 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       process.exit(0);
     })
     .catch(async (error) => {
-      console.error('[aibroker] postgres seed failed', error);
+      seedLogger.error('db.seed.failed', { err: error });
       await pgClient.end();
       process.exit(1);
     });
 }
 
+export async function hasAnyUser(): Promise<boolean> {
+  const rows = await db.select({ id: schema.users.id }).from(schema.users).limit(1);
+  return rows.length > 0;
+}
+
 export async function ensureAdmin(): Promise<void> {
+  // Only auto-seed if BOOTSTRAP_ADMIN_EMAIL is explicitly configured.
+  // Without it the interactive /setup onboarding form creates the first user.
+  if (!process.env.BOOTSTRAP_ADMIN_EMAIL) return;
   await bootstrapAdminIfNeeded();
 }
 

@@ -11,30 +11,32 @@
     Textarea,
     Badge,
     ConfirmDialog,
-  } from "$lib/components/ui";
-  import { enhance } from "$app/forms";
-  import DateRangePicker from "$lib/components/date-range-picker.svelte";
-  import { Trash2, Pencil, X, Check } from "@lucide/svelte";
-  import { fmtInt } from "$lib/utils";
+  } from '$lib/components/ui';
+  import { enhance } from '$app/forms';
+  import { toast } from 'svelte-sonner';
+  import DateRangePicker from '$lib/components/date-range-picker.svelte';
+  import { Trash2, Pencil, X, Check } from '@lucide/svelte';
+  import { fmtInt } from '$lib/utils';
 
-  let { data } = $props();
+  let { data, form } = $props();
+  let lastToastSignature = $state('');
   let editingId: string | null = $state(null);
-  let createStage = $state("pre");
-  let createKind = $state("regex_block");
-  let createProfileId = $state("");
-  let editStage = $state("pre");
-  let editKind = $state("regex_block");
-  let editProfileId = $state("");
+  let createStage = $state('pre');
+  let createKind = $state('regex_block');
+  let createProfileId = $state('');
+  let editStage = $state('pre');
+  let editKind = $state('regex_block');
+  let editProfileId = $state('');
 
   function startEditing(g: (typeof data.guardrails)[number]) {
     editingId = g.id;
     editStage = g.stage;
     editKind = g.kind;
-    editProfileId = g.profileId ?? "";
+    editProfileId = g.profileId ?? '';
   }
   let confirmOpen = $state(false);
   let deleteId: string | null = $state(null);
-  let deleteName = $state("");
+  let deleteName = $state('');
   let deleteFormEl: HTMLFormElement | null = null;
 
   function askDelete(id: string, name: string) {
@@ -73,9 +75,26 @@
   });
 
   function scopeLabel(profileId: string | null | undefined): string {
-    if (!profileId) return "Global";
-    return profileNameById.get(profileId) ?? "Profile-scoped";
+    if (!profileId) return 'Global';
+    return profileNameById.get(profileId) ?? 'Profile-scoped';
   }
+
+  $effect(() => {
+    if (!form || typeof form !== 'object') return;
+    const payload = form as Record<string, unknown>;
+    const signature = JSON.stringify(payload);
+    if (signature === lastToastSignature) return;
+    lastToastSignature = signature;
+
+    if (typeof payload.error === 'string' && payload.error) {
+      toast.error(payload.error);
+      return;
+    }
+
+    if (payload.ok) {
+      toast.success('Guardrail changes saved.');
+    }
+  });
 </script>
 
 <svelte:head><title>Guardrails · AiBroker</title></svelte:head>
@@ -95,7 +114,7 @@
   class="hidden"
   bind:this={deleteFormEl}
 >
-  <input type="hidden" name="id" value={deleteId ?? ""} />
+  <input type="hidden" name="id" value={deleteId ?? ''} />
 </form>
 
 <div class="flex flex-col gap-6">
@@ -271,7 +290,7 @@
                     <div class="md:col-span-6">
                       <Label>Config (JSON)</Label>
                       <Textarea name="config" rows={4}
-                        >{g.config ?? "{}"}</Textarea
+                        >{g.config ?? '{}'}</Textarea
                       >
                     </div>
                     <div class="md:col-span-6 flex justify-end gap-2">
@@ -296,7 +315,7 @@
                 <td class="py-2 pr-4">{g.stage}</td>
                 <td class="py-2 pr-4 text-muted-foreground">{g.kind}</td>
                 <td class="py-2 pr-4">
-                  <Badge variant={g.profileId ? "default" : "outline"}>
+                  <Badge variant={g.profileId ? 'default' : 'outline'}>
                     {scopeLabel(g.profileId)}
                   </Badge>
                 </td>

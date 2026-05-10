@@ -10,41 +10,48 @@
     Table,
     Badge,
     ConfirmDialog,
-  } from "$lib/components/ui";
-  import { enhance } from "$app/forms";
-  import { fmtCurrency, fmtDateTime } from "$lib/utils";
-  import { Trash2, Pencil, X, Check, RotateCw } from "@lucide/svelte";
+  } from '$lib/components/ui';
+  import { enhance } from '$app/forms';
+  import { toast } from 'svelte-sonner';
+  import { fmtCurrency, fmtDateTime } from '$lib/utils';
+  import { Trash2, Pencil, X, Check, RotateCw } from '@lucide/svelte';
 
   let { data, form } = $props();
   let editingId: string | null = $state(null);
-  let createProfileId = $state("");
-  let createFreq = $state("");
-  let editProfileId = $state("");
-  let editFreq = $state("");
+  let createProfileId = $state('');
+  let createFreq = $state('');
+  let editProfileId = $state('');
+  let editFreq = $state('');
   let keyDialogOpen = $state(false);
   let keyDialogCopied = $state(false);
-  let keyDialogToken = $state("");
-  let keyDialogTitle = $state("Copy API key");
-  let keyDialogDescription = $state("");
+  let keyDialogToken = $state('');
+  let keyDialogTitle = $state('Copy API key');
+  let keyDialogDescription = $state('');
+  let lastToastSignature = $state('');
 
   function startEditing(k: (typeof data.keys)[number]) {
     editingId = k.id;
     editProfileId = k.profileId;
-    editFreq = k.budgetFrequency ?? "";
+    editFreq = k.budgetFrequency ?? '';
   }
   let confirmOpen = $state(false);
   let deleteId: string | null = $state(null);
-  let deleteName = $state("");
+  let deleteName = $state('');
   let deleteFormEl: HTMLFormElement | null = null;
 
-  function openKeyDialog(token: string, reason: "create" | "rotate") {
+  function openKeyDialog(token: string, reason: 'create' | 'rotate') {
     keyDialogToken = token;
     keyDialogCopied = false;
     keyDialogTitle =
-      reason === "create" ? "API key created" : "API key regenerated";
+      reason === 'create' ? 'API key created' : 'API key regenerated';
     keyDialogDescription =
-      "For security reasons, this key is shown only once. Save it now. If it is lost, you must regenerate it and copy it again.";
+      'For security reasons, this key is shown only once. Save it now. If it is lost, you must regenerate it and copy it again.';
     keyDialogOpen = true;
+    if (reason === 'create') {
+      toast.success('API key created. Copy it now before closing.');
+      return;
+    }
+    toast.success('API key rotated. Copy the new key now.');
   }
 
   async function copyGeneratedKey() {
@@ -76,8 +83,8 @@
   });
 
   function scopeLabel(profileId: string | null | undefined): string {
-    if (!profileId) return "Global";
-    return profileNameById.get(profileId) ?? "Profile-scoped";
+    if (!profileId) return 'Global';
+    return profileNameById.get(profileId) ?? 'Profile-scoped';
   }
 
   function isModelEligible(
@@ -95,9 +102,30 @@
   );
 
   const actionWarning = $derived.by(() => {
-    if (!form || typeof form !== "object") return null;
+    if (!form || typeof form !== 'object') return null;
     const warning = (form as { warning?: unknown }).warning;
-    return typeof warning === "string" ? warning : null;
+    return typeof warning === 'string' ? warning : null;
+  });
+
+  $effect(() => {
+    if (!form || typeof form !== 'object') return;
+    const payload = form as Record<string, unknown>;
+    const signature = JSON.stringify(payload);
+    if (signature === lastToastSignature) return;
+    lastToastSignature = signature;
+
+    if (typeof payload.error === 'string' && payload.error) {
+      toast.error(payload.error);
+      return;
+    }
+
+    if (typeof payload.warning === 'string' && payload.warning) {
+      toast.warning(payload.warning);
+    }
+
+    if (payload.ok) {
+      toast.success('API key changes saved.');
+    }
   });
 </script>
 
@@ -118,7 +146,7 @@
   class="hidden"
   bind:this={deleteFormEl}
 >
-  <input type="hidden" name="id" value={deleteId ?? ""} />
+  <input type="hidden" name="id" value={deleteId ?? ''} />
 </form>
 
 {#if keyDialogOpen}
@@ -141,7 +169,7 @@
           disabled={!keyDialogCopied}
           onclick={() => {
             keyDialogOpen = false;
-            keyDialogToken = "";
+            keyDialogToken = '';
           }}
         >
           I saved the key
@@ -176,13 +204,13 @@
         use:enhance={() => {
           return async ({ result, update }) => {
             await update();
-            if (result.type !== "success") return;
+            if (result.type !== 'success') return;
             const payload = (result.data ?? {}) as { createdToken?: unknown };
             if (
-              typeof payload.createdToken === "string" &&
+              typeof payload.createdToken === 'string' &&
               payload.createdToken
             ) {
-              openKeyDialog(payload.createdToken, "create");
+              openKeyDialog(payload.createdToken, 'create');
             }
           };
         }}
@@ -197,7 +225,7 @@
           <Select.Root bind:value={createProfileId} name="profileId">
             <Select.Trigger id="k-profile">
               {data.profiles.find((p) => p.id === createProfileId)?.name ??
-                "Select profile..."}
+                'Select profile...'}
             </Select.Trigger>
             <Select.Content>
               <Select.Item value="" label="Select profile..." />
@@ -222,7 +250,7 @@
           <Label for="k-freq">Frequency</Label>
           <Select.Root bind:value={createFreq} name="budgetFrequency">
             <Select.Trigger id="k-freq"
-              >{createFreq || "unlimited"}</Select.Trigger
+              >{createFreq || 'unlimited'}</Select.Trigger
             >
             <Select.Content>
               <Select.Item value="" label="unlimited" />
@@ -247,15 +275,15 @@
               >
                 <input type="checkbox" name="modelIds" value={m.id} />
                 <span>{m.publicId}</span>
-                <Badge variant={m.backendProfileId ? "default" : "outline"}
+                <Badge variant={m.backendProfileId ? 'default' : 'outline'}
                   >{scopeLabel(m.backendProfileId)}</Badge
                 >
               </label>
             {:else}
               <span class="text-sm text-muted-foreground"
                 >{createProfileId
-                  ? "No eligible models for this profile yet."
-                  : "Select a profile to load eligible models."}</span
+                  ? 'No eligible models for this profile yet.'
+                  : 'Select a profile to load eligible models.'}</span
               >
             {/each}
           </div>
@@ -313,7 +341,7 @@
                       <Select.Root bind:value={editProfileId} name="profileId">
                         <Select.Trigger>
                           {data.profiles.find((p) => p.id === editProfileId)
-                            ?.name ?? "Select profile..."}
+                            ?.name ?? 'Select profile...'}
                         </Select.Trigger>
                         <Select.Content>
                           {#each data.profiles as p (p.id)}
@@ -336,7 +364,7 @@
                       <Label>Frequency</Label>
                       <Select.Root bind:value={editFreq} name="budgetFrequency">
                         <Select.Trigger
-                          >{editFreq || "unlimited"}</Select.Trigger
+                          >{editFreq || 'unlimited'}</Select.Trigger
                         >
                         <Select.Content>
                           <Select.Item value="" label="unlimited" />
@@ -378,8 +406,8 @@
                             <span>{m.publicId}</span>
                             <Badge
                               variant={m.backendProfileId
-                                ? "default"
-                                : "outline"}
+                                ? 'default'
+                                : 'outline'}
                               >{scopeLabel(m.backendProfileId)}</Badge
                             >
                           </label>
@@ -408,7 +436,7 @@
             {:else}
               <tr class="border-b border-border/60 align-top">
                 <td class="py-2 pr-4 font-medium">{k.name}</td>
-                <td class="py-2 pr-4">{k.profileName ?? "—"}</td>
+                <td class="py-2 pr-4">{k.profileName ?? '—'}</td>
                 <td class="py-2 pr-4">
                   <span class="text-xs text-muted-foreground">
                     Hidden for security
@@ -416,13 +444,13 @@
                 </td>
                 <td class="py-2 pr-4">
                   {k.budget && k.budget > 0
-                    ? `${fmtCurrency(k.budget)} / ${k.budgetFrequency ?? "—"}`
-                    : "unlimited"}
+                    ? `${fmtCurrency(k.budget)} / ${k.budgetFrequency ?? '—'}`
+                    : 'unlimited'}
                 </td>
                 <td class="py-2 pr-4">
                   <span class="text-xs text-muted-foreground">
                     {k.allowedModelIds.length === 0
-                      ? "all"
+                      ? 'all'
                       : `${k.allowedModelIds.length} scoped`}
                   </span>
                 </td>
@@ -434,7 +462,7 @@
                   {/if}
                 </td>
                 <td class="py-2 pr-4 text-muted-foreground">
-                  {k.lastUsedAt ? fmtDateTime(k.lastUsedAt) : "never"}
+                  {k.lastUsedAt ? fmtDateTime(k.lastUsedAt) : 'never'}
                 </td>
                 <td class="py-2 text-right">
                   <Button
@@ -450,15 +478,15 @@
                     use:enhance={() => {
                       return async ({ result, update }) => {
                         await update();
-                        if (result.type !== "success") return;
+                        if (result.type !== 'success') return;
                         const payload = (result.data ?? {}) as {
                           rotatedToken?: unknown;
                         };
                         if (
-                          typeof payload.rotatedToken === "string" &&
+                          typeof payload.rotatedToken === 'string' &&
                           payload.rotatedToken
                         ) {
-                          openKeyDialog(payload.rotatedToken, "rotate");
+                          openKeyDialog(payload.rotatedToken, 'rotate');
                         }
                       };
                     }}

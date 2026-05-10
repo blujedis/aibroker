@@ -11,25 +11,27 @@
     Textarea,
     Badge,
     ConfirmDialog,
-  } from "$lib/components/ui";
-  import { enhance } from "$app/forms";
-  import { Trash2, Pencil, X, Check } from "@lucide/svelte";
+  } from '$lib/components/ui';
+  import { enhance } from '$app/forms';
+  import { toast } from 'svelte-sonner';
+  import { Trash2, Pencil, X, Check } from '@lucide/svelte';
 
-  let { data } = $props();
+  let { data, form } = $props();
+  let lastToastSignature = $state('');
   let editingId: string | null = $state(null);
-  let createTransport = $state<"stdio" | "sse" | "http">("stdio");
-  let createProfileId = $state("");
-  let editTransport = $state<"stdio" | "sse" | "http">("stdio");
-  let editProfileId = $state("");
+  let createTransport = $state<'stdio' | 'sse' | 'http'>('stdio');
+  let createProfileId = $state('');
+  let editTransport = $state<'stdio' | 'sse' | 'http'>('stdio');
+  let editProfileId = $state('');
 
   function startEditing(s: (typeof data.servers)[number]) {
     editingId = s.id;
-    editTransport = s.transport as "stdio" | "sse" | "http";
-    editProfileId = s.profileId ?? "";
+    editTransport = s.transport as 'stdio' | 'sse' | 'http';
+    editProfileId = s.profileId ?? '';
   }
   let confirmOpen = $state(false);
   let deleteId: string | null = $state(null);
-  let deleteName = $state("");
+  let deleteName = $state('');
   let deleteFormEl: HTMLFormElement | null = null;
 
   function askDelete(id: string, name: string) {
@@ -52,9 +54,26 @@
   });
 
   function scopeLabel(profileId: string | null | undefined): string {
-    if (!profileId) return "Global";
-    return profileNameById.get(profileId) ?? "Profile-scoped";
+    if (!profileId) return 'Global';
+    return profileNameById.get(profileId) ?? 'Profile-scoped';
   }
+
+  $effect(() => {
+    if (!form || typeof form !== 'object') return;
+    const payload = form as Record<string, unknown>;
+    const signature = JSON.stringify(payload);
+    if (signature === lastToastSignature) return;
+    lastToastSignature = signature;
+
+    if (typeof payload.error === 'string' && payload.error) {
+      toast.error(payload.error);
+      return;
+    }
+
+    if (payload.ok) {
+      toast.success('MCP server changes saved.');
+    }
+  });
 </script>
 
 <svelte:head><title>MCP servers · AiBroker</title></svelte:head>
@@ -74,7 +93,7 @@
   class="hidden"
   bind:this={deleteFormEl}
 >
-  <input type="hidden" name="id" value={deleteId ?? ""} />
+  <input type="hidden" name="id" value={deleteId ?? ''} />
 </form>
 
 <div class="flex flex-col gap-6">
@@ -195,7 +214,7 @@
                     </Select.Root>
                     <Input
                       name="command"
-                      value={s.command ?? ""}
+                      value={s.command ?? ''}
                       class="md:col-span-3"
                     />
                     <div class="md:col-span-3">
@@ -217,15 +236,15 @@
                     </div>
                     <div class="md:col-span-3">
                       <Label>Args (JSON)</Label>
-                      <Textarea name="args" rows={2}>{s.args ?? "[]"}</Textarea>
+                      <Textarea name="args" rows={2}>{s.args ?? '[]'}</Textarea>
                     </div>
                     <div class="md:col-span-3">
                       <Label>Env (JSON)</Label>
-                      <Textarea name="env" rows={2}>{s.env ?? "{}"}</Textarea>
+                      <Textarea name="env" rows={2}>{s.env ?? '{}'}</Textarea>
                     </div>
                     <Input
                       name="url"
-                      value={s.url ?? ""}
+                      value={s.url ?? ''}
                       class="md:col-span-6"
                       placeholder="URL"
                     />
@@ -256,14 +275,14 @@
                 <td class="py-2 pr-4 font-medium">{s.name}</td>
                 <td class="py-2 pr-4">{s.transport}</td>
                 <td class="py-2 pr-4">
-                  <Badge variant={s.profileId ? "default" : "outline"}>
+                  <Badge variant={s.profileId ? 'default' : 'outline'}>
                     {scopeLabel(s.profileId)}
                   </Badge>
                 </td>
                 <td class="py-2 pr-4 text-muted-foreground font-mono text-xs">
-                  {s.transport === "stdio"
-                    ? (s.command ?? "—")
-                    : (s.url ?? "—")}
+                  {s.transport === 'stdio'
+                    ? (s.command ?? '—')
+                    : (s.url ?? '—')}
                 </td>
                 <td class="py-2 pr-4">
                   {#if s.enabled}<Badge variant="success">enabled</Badge>{:else}

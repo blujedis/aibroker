@@ -39,7 +39,7 @@ export const POST: RequestHandler = async ({ request }) => {
   const messages: ChatMessage[] = Array.isArray(body.messages) ? (body.messages as ChatMessage[]) : [];
 
   const token = extractBearer(request);
-  const resolved = resolveKey(token, publicModel);
+  const resolved = await resolveKey(token, publicModel);
   if ('code' in resolved) {
     return json(errBody(resolved.code, resolved.message), {
       status:
@@ -53,7 +53,7 @@ export const POST: RequestHandler = async ({ request }) => {
 
   const { profile, virtualKey, model, backend } = resolved;
 
-  const budget = checkBudgets(profile, virtualKey);
+  const budget = await checkBudgets(profile, virtualKey);
   if (!budget.allowed) {
     logRequest(
       { profile, virtualKey, model },
@@ -75,7 +75,7 @@ export const POST: RequestHandler = async ({ request }) => {
   }
 
   // Pre-stage guardrails
-  const pre = runPreStage({ messages, model: publicModel, profileId: profile.id });
+  const pre = await runPreStage({ messages, model: publicModel, profileId: profile.id });
 
   if (pre.outcome.action === 'block') {
     const preLogs = pre.logs;
@@ -94,7 +94,7 @@ export const POST: RequestHandler = async ({ request }) => {
         cost: 0,
         latencyMs: Math.round(performance.now() - started)
       },
-      (id) => persistGuardrailLogs(preLogs, {
+      async (id) => persistGuardrailLogs(preLogs, {
         profileId: preProfile.id,
         virtualKeyId: preVirtualKey.id,
         requestId: id
@@ -178,7 +178,7 @@ export const POST: RequestHandler = async ({ request }) => {
         cost: 0,
         latencyMs: Math.round(performance.now() - started)
       },
-      (id) => persistGuardrailLogs(failLogs, {
+      async (id) => persistGuardrailLogs(failLogs, {
         profileId: failProfile.id,
         virtualKeyId: failVirtualKey.id,
         requestId: id
@@ -195,7 +195,7 @@ export const POST: RequestHandler = async ({ request }) => {
     ? (upstreamJson!.choices as Array<{ message?: { content?: string } }>)
     : [];
   const respText = choices.map((c) => c.message?.content ?? '').join('\n');
-  const post = runPostStage({ responseText: respText, profileId: profile.id });
+  const post = await runPostStage({ responseText: respText, profileId: profile.id });
   if (choices.length > 0 && post.responseText !== respText) {
     // Replace each message's content with redacted equivalents (rough — put the whole
     // redacted text on the first choice for simplicity).
@@ -250,7 +250,7 @@ export const POST: RequestHandler = async ({ request }) => {
       cost,
       latencyMs
     },
-    (id) => persistGuardrailLogs(allLogs, {
+    async (id) => persistGuardrailLogs(allLogs, {
       profileId: successProfile.id,
       virtualKeyId: successVirtualKey.id,
       requestId: id
@@ -268,8 +268,8 @@ async function handleStreaming(opts: {
   backend: Parameters<typeof callUpstreamChat>[0]['backend'];
   profile: { id: string; name: string };
   virtualKey: { id: string; name: string };
-  model: import('$lib/server/db/schema.js').Model;
-  preLogs: ReturnType<typeof runPreStage>['logs'];
+  model: import('$lib/server/db/schema.postgres.js').Model;
+  preLogs: Awaited<ReturnType<typeof runPreStage>>['logs'];
 }): Promise<Response> {
   const { started, outgoingBody, backend, profile, virtualKey, model, preLogs } = opts;
 
@@ -330,7 +330,7 @@ async function handleStreaming(opts: {
         cost: 0,
         latencyMs: Math.round(performance.now() - started)
       },
-      (id) => persistGuardrailLogs(streamFailLogs, {
+      async (id) => persistGuardrailLogs(streamFailLogs, {
         profileId: streamFailProfile.id,
         virtualKeyId: streamFailVirtualKey.id,
         requestId: id
@@ -345,7 +345,7 @@ async function handleStreaming(opts: {
   let aggregatedContent = '';
   let promptTokens = 0;
   let completionTokens = 0;
-  let duringLogs: ReturnType<typeof runDuringChunk>['logs'] = [];
+  let duringLogs: Awaited<ReturnType<typeof runDuringChunk>>['logs'] = [];
   let blocked = false;
 
   const stream = new ReadableStream<Uint8Array>({
@@ -362,7 +362,7 @@ async function handleStreaming(opts: {
           while ((idx = bufferedText.indexOf('\n\n')) !== -1) {
             const frame = bufferedText.slice(0, idx);
             bufferedText = bufferedText.slice(idx + 2);
-            const processed = processFrame(frame);
+            const processed = await processFrame(frame);
             if (processed.done) {
               controller.enqueue(encoder.encode(frame + '\n\n'));
               continue;
@@ -390,12 +390,12 @@ async function handleStreaming(opts: {
     }
   });
 
-  function processFrame(frame: string): {
+  async function processFrame(frame: string): Promise<{
     frame: string;
     done: boolean;
     blocked: boolean;
     reason?: string;
-  } {
+  }> {
     // SSE frame may contain multiple "data:" lines; just work with them.
     const lines = frame.split('\n');
     const outLines: string[] = [];
@@ -420,7 +420,7 @@ async function handleStreaming(opts: {
         }
         const delta = obj.choices?.[0]?.delta?.content;
         if (typeof delta === 'string' && delta.length > 0) {
-          const res = runDuringChunk(delta, profile.id);
+          const res = await runDuringChunk(delta, profile.id);
           duringLogs = duringLogs.concat(res.logs);
           if (res.block) {
             return { frame: line, done: false, blocked: true, reason: res.logs.at(-1)?.reason ?? undefined };
@@ -452,7 +452,7 @@ async function handleStreaming(opts: {
 
   // When the response finishes, finalize logging.
   const finalize = async () => {
-    const post = runPostStage({ responseText: aggregatedContent, profileId: profile.id });
+    const post = await runPostStage({ responseText: aggregatedContent, profileId: profile.id });
     const inputTokens = promptTokens || estimateTokens(JSON.stringify(outgoingBody.messages ?? ''));
     const outputTokens = completionTokens || estimateTokens(aggregatedContent);
     const breakdown = computeCostBreakdown(model, { inputTokens, outputTokens });
@@ -480,7 +480,7 @@ async function handleStreaming(opts: {
         cost,
         latencyMs
       },
-      (id) => persistGuardrailLogs(streamAllLogs, {
+      async (id) => persistGuardrailLogs(streamAllLogs, {
         profileId: streamProfile.id,
         virtualKeyId: streamVirtualKey.id,
         requestId: id

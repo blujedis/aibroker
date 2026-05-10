@@ -19,7 +19,10 @@ import {
 import { findActiveInvitationByEmail, acceptInvitation } from '$lib/server/invitations/service.js';
 import { ensureProfileAssignmentsExist } from '$lib/server/authz.js';
 import { getGlobalSettings } from '$lib/server/settings.js';
+import { logger } from '$lib/server/observability/logger.js';
 import type { RequestHandler } from './$types';
+
+const oauthLogger = logger.child({ component: 'auth.oauth.callback' });
 
 const SUPPORTED_PROVIDERS = ['google'] as const;
 type Provider = (typeof SUPPORTED_PROVIDERS)[number];
@@ -60,12 +63,12 @@ export const GET: RequestHandler = async ({ params, url, cookies, locals }) => {
   let userInfo: { googleUserId: string; email: string; name: string | null };
   try {
     if (provider === 'google') {
-      userInfo = await exchangeGoogleCode(code, stateRow.codeVerifier);
+      userInfo = await exchangeGoogleCode(code, stateRow.codeVerifier, url.origin);
     } else {
       throw error(404, 'Unknown OAuth provider');
     }
   } catch (err) {
-    console.error('[oauth/callback] Token exchange failed:', err);
+    oauthLogger.error('auth.oauth.exchange.failed', { provider, err });
     throw redirect(303, '/login?oauth_error=exchange_failed');
   }
 

@@ -1,5 +1,4 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-// import puppeteer, { GoToOptions, Page, Browser } from 'puppeteer';
 import { writeFileSync } from 'fs';
 import * as cheerio from 'cheerio';
 import { join } from 'path';

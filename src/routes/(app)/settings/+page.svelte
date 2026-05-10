@@ -6,11 +6,40 @@
     CardHeader,
     Input,
     Label,
-  } from "$lib/components/ui";
-  import { enhance } from "$app/forms";
-  import { Upload } from "@lucide/svelte";
+  } from '$lib/components/ui';
+  import { enhance } from '$app/forms';
+  import { toast } from 'svelte-sonner';
+  import { Upload } from '@lucide/svelte';
 
   let { data, form } = $props();
+  let lastToastSignature = $state('');
+
+  $effect(() => {
+    if (!form || typeof form !== 'object') return;
+    const payload = form as Record<string, unknown>;
+    const signature = JSON.stringify(payload);
+    if (signature === lastToastSignature) return;
+    lastToastSignature = signature;
+
+    if (typeof payload.error === 'string' && payload.error) {
+      toast.error(payload.error);
+      return;
+    }
+
+    if ('catalog' in payload && payload.catalog) {
+      toast.success('Catalog import completed.');
+      return;
+    }
+
+    if ('reaped' in payload) {
+      toast.success('Expired sessions reaped.');
+      return;
+    }
+
+    if ('globalMfaEnabled' in payload) {
+      toast.success('Global MFA setting updated.');
+    }
+  });
 </script>
 
 <svelte:head><title>Settings · AiBroker</title></svelte:head>
@@ -33,7 +62,7 @@
         <p class="text-sm text-muted-foreground">
           Global MFA status:
           <strong
-            >{data.settings.globalMfaEnabled ? "Enabled" : "Disabled"}</strong
+            >{data.settings.globalMfaEnabled ? 'Enabled' : 'Disabled'}</strong
           >
         </p>
         {#if data.user?.isSuperadmin}
@@ -103,12 +132,6 @@
         </div>
         <div>
           <dt class="text-xs uppercase text-muted-foreground">
-            DATABASE_DIALECT
-          </dt>
-          <dd class="font-mono">{data.env.DATABASE_DIALECT}</dd>
-        </div>
-        <div>
-          <dt class="text-xs uppercase text-muted-foreground">
             INVITE_EXPIRY_HOURS
           </dt>
           <dd class="font-mono">{data.env.INVITE_EXPIRY_HOURS}</dd>
@@ -168,7 +191,7 @@
         class="flex items-center gap-3"
       >
         <Button type="submit" variant="secondary">Reap expired sessions</Button>
-        {#if form && "reaped" in form}
+        {#if form && 'reaped' in form}
           <span class="text-sm text-muted-foreground"
             >Removed {form.reaped} expired sessions.</span
           >
@@ -203,7 +226,7 @@
         <Button type="submit">
           <Upload class="h-4 w-4 mr-1" /> Upload & upsert
         </Button>
-        {#if form && "catalog" in form && form.catalog}
+        {#if form && 'catalog' in form && form.catalog}
           <p class="text-sm text-muted-foreground w-full">
             Providers: <strong>{form.catalog.providersInserted}</strong>
             inserted,
@@ -212,7 +235,7 @@
             <strong>{form.catalog.modelsUpdated}</strong> updated.
           </p>
         {/if}
-        {#if form && "error" in form && form.error}
+        {#if form && 'error' in form && form.error}
           <p class="text-sm text-destructive w-full">{form.error}</p>
         {/if}
       </form>

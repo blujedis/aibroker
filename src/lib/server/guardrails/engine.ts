@@ -1,8 +1,8 @@
 import { and, eq, or } from 'drizzle-orm';
 import { nanoid } from 'nanoid';
-import { db, schema } from '../db/index.js';
+import { db, schema } from '../db/postgres.js';
 import { isResourceAccessibleToProfile } from '../scope.js';
-import type { Guardrail } from '../db/schema.js';
+import type { Guardrail } from '../db/schema.postgres.js';
 
 export type GuardrailStage = 'pre' | 'during' | 'post';
 
@@ -128,29 +128,28 @@ interface InternalGuardrailLog {
   reason: string | null;
 }
 
-export function loadGuardrails(stage: GuardrailStage, profileId?: string | null): Guardrail[] {
-  const guardrails = db
+export async function loadGuardrails(stage: GuardrailStage, profileId?: string | null): Promise<Guardrail[]> {
+  const guardrails = await db
     .select()
     .from(schema.guardrails)
-    .where(eq(schema.guardrails.enabled, true))
-    .all();
+    .where(eq(schema.guardrails.enabled, true));
 
   // Filter by stage
-  let filtered = guardrails.filter((g) => g.stage === stage);
+  let filtered = guardrails.filter((g: Guardrail) => g.stage === stage);
 
   // Filter by profile scope if profileId provided
   if (profileId !== undefined && profileId !== null) {
-    filtered = filtered.filter((g) => isResourceAccessibleToProfile(g.profileId, profileId));
+    filtered = filtered.filter((g: Guardrail) => isResourceAccessibleToProfile(g.profileId, profileId));
   }
 
-  return filtered.sort((a, b) => a.priority - b.priority);
+  return filtered.sort((a: Guardrail, b: Guardrail) => a.priority - b.priority);
 }
 
-export function runPreStage(input: PreStageInput): PreStageResult {
+export async function runPreStage(input: PreStageInput): Promise<PreStageResult> {
   const logs: InternalGuardrailLog[] = [];
   let messages = input.messages;
 
-  for (const g of loadGuardrails('pre', input.profileId)) {
+  for (const g of await loadGuardrails('pre', input.profileId)) {
     const started = performance.now();
     let action: 'allow' | 'redact' | 'block' = 'allow';
     let reason: string | null = null;
@@ -248,11 +247,11 @@ export function runPreStage(input: PreStageInput): PreStageResult {
   return { outcome: { action: 'allow' }, messages, logs };
 }
 
-export function runPostStage(input: PostStageInput): PostStageResult {
+export async function runPostStage(input: PostStageInput): Promise<PostStageResult> {
   const logs: InternalGuardrailLog[] = [];
   let responseText = input.responseText;
 
-  for (const g of loadGuardrails('post', input.profileId)) {
+  for (const g of await loadGuardrails('post', input.profileId)) {
     const started = performance.now();
     let action: 'allow' | 'redact' | 'block' = 'allow';
     let reason: string | null = null;
@@ -310,11 +309,11 @@ export function runPostStage(input: PostStageInput): PostStageResult {
 
 // During-stage: inspects individual streaming chunks. Returns transformed text and
 // optional block signal.
-export function runDuringChunk(chunk: string, profileId?: string | null): { text: string; block: boolean; logs: InternalGuardrailLog[] } {
+export async function runDuringChunk(chunk: string, profileId?: string | null): Promise<{ text: string; block: boolean; logs: InternalGuardrailLog[] }> {
   const logs: InternalGuardrailLog[] = [];
   let text = chunk;
   let block = false;
-  for (const g of loadGuardrails('during', profileId)) {
+  for (const g of await loadGuardrails('during', profileId)) {
     const started = performance.now();
     let action: 'allow' | 'redact' | 'block' = 'allow';
     let reason: string | null = null;
@@ -362,13 +361,13 @@ export function runDuringChunk(chunk: string, profileId?: string | null): { text
 // ───────────────────────────────────────────────────────────────
 // Persist logs
 // ───────────────────────────────────────────────────────────────
-export function persistGuardrailLogs(
+export async function persistGuardrailLogs(
   entries: InternalGuardrailLog[],
   ctx: GuardrailContext
-): void {
+): Promise<void> {
   if (entries.length === 0) return;
   for (const e of entries) {
-    db.insert(schema.guardrailLogs)
+    await db.insert(schema.guardrailLogs)
       .values({
         id: nanoid(),
         guardrailId: e.guardrailId,
@@ -381,6 +380,6 @@ export function persistGuardrailLogs(
         latencyMs: e.latencyMs,
         reason: e.reason
       })
-      .run();
+      .execute();
   }
 }

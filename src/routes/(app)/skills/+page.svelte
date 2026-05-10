@@ -11,17 +11,19 @@
     Textarea,
     Badge,
     ConfirmDialog,
-  } from "$lib/components/ui";
-  import { enhance } from "$app/forms";
-  import { Trash2, Pencil, X, Check } from "@lucide/svelte";
+  } from '$lib/components/ui';
+  import { enhance } from '$app/forms';
+  import { toast } from 'svelte-sonner';
+  import { Trash2, Pencil, X, Check } from '@lucide/svelte';
 
-  let { data } = $props();
+  let { data, form } = $props();
+  let lastToastSignature = $state('');
   let editingId: string | null = $state(null);
-  let createProfileId = $state("");
-  let editProfileId = $state("");
+  let createProfileId = $state('');
+  let editProfileId = $state('');
   let confirmOpen = $state(false);
   let deleteId: string | null = $state(null);
-  let deleteName = $state("");
+  let deleteName = $state('');
   let deleteFormEl: HTMLFormElement | null = null;
 
   function askDelete(id: string, name: string) {
@@ -44,9 +46,26 @@
   });
 
   function scopeLabel(profileId: string | null | undefined): string {
-    if (!profileId) return "Global";
-    return profileNameById.get(profileId) ?? "Profile-scoped";
+    if (!profileId) return 'Global';
+    return profileNameById.get(profileId) ?? 'Profile-scoped';
   }
+
+  $effect(() => {
+    if (!form || typeof form !== 'object') return;
+    const payload = form as Record<string, unknown>;
+    const signature = JSON.stringify(payload);
+    if (signature === lastToastSignature) return;
+    lastToastSignature = signature;
+
+    if (typeof payload.error === 'string' && payload.error) {
+      toast.error(payload.error);
+      return;
+    }
+
+    if (payload.ok) {
+      toast.success('Skill changes saved.');
+    }
+  });
 </script>
 
 <svelte:head><title>Skills · AiBroker</title></svelte:head>
@@ -66,7 +85,7 @@
   class="hidden"
   bind:this={deleteFormEl}
 >
-  <input type="hidden" name="id" value={deleteId ?? ""} />
+  <input type="hidden" name="id" value={deleteId ?? ''} />
 </form>
 
 <div class="flex flex-col gap-6">
@@ -149,7 +168,7 @@
                     <input type="hidden" name="id" value={s.id} />
                     <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
                       <Input name="name" value={s.name} required />
-                      <Input name="description" value={s.description ?? ""} />
+                      <Input name="description" value={s.description ?? ''} />
                     </div>
                     <div class="max-w-sm">
                       <Label>Scope</Label>
@@ -197,10 +216,10 @@
               <tr class="border-b border-border/60">
                 <td class="py-2 pr-4 font-medium">{s.name}</td>
                 <td class="py-2 pr-4 text-muted-foreground"
-                  >{s.description ?? "—"}</td
+                  >{s.description ?? '—'}</td
                 >
                 <td class="py-2 pr-4">
-                  <Badge variant={s.profileId ? "default" : "outline"}>
+                  <Badge variant={s.profileId ? 'default' : 'outline'}>
                     {scopeLabel(s.profileId)}
                   </Badge>
                 </td>
@@ -214,7 +233,7 @@
                     size="sm"
                     onclick={() => {
                       editingId = s.id;
-                      editProfileId = s.profileId ?? "";
+                      editProfileId = s.profileId ?? '';
                     }}
                   >
                     <Pencil class="h-4 w-4" />

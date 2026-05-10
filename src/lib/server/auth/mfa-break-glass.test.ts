@@ -6,13 +6,13 @@ import {
   hashBreakGlassToken
 } from './mfa-break-glass.js';
 
-const ORIGINAL_EXPIRY = process.env.MFA_BREAK_GLASS_EXPIRY_MINUTES;
+const ORIGINAL_EXPIRY = Number(process.env.MFA_BREAK_GLASS_EXPIRY_MINUTES || 10);
 
 afterEach(() => {
   if (ORIGINAL_EXPIRY === undefined) {
     delete process.env.MFA_BREAK_GLASS_EXPIRY_MINUTES;
   } else {
-    process.env.MFA_BREAK_GLASS_EXPIRY_MINUTES = ORIGINAL_EXPIRY;
+    process.env.MFA_BREAK_GLASS_EXPIRY_MINUTES = ORIGINAL_EXPIRY + '';
   }
 });
 

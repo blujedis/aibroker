@@ -1,4 +1,4 @@
-import type { Model } from '../db/schema.js';
+import type { Model } from '../db/schema.postgres.js';
 
 export interface UsageTokens {
   inputTokens?: number;

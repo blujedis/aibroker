@@ -1,4 +1,4 @@
-import type { Backend } from '../db/schema.js';
+import type { Backend } from '../db/schema.postgres.js';
 import { decryptSecret } from '../secrets.js';
 
 export interface UpstreamRequestInit {

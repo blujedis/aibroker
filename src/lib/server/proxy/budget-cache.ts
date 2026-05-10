@@ -16,19 +16,19 @@ function cacheKey(kind: 'vkey' | 'profile', id: string, windowStart: number): st
  * The returned value is the spend *at the time of the last cache population*
  * plus any increments added via `addSpend` since then.
  */
-export function getBudgetSpend(
+export async function getBudgetSpend(
   kind: 'vkey' | 'profile',
   id: string,
   windowStart: number,
-  fallback: () => number
-): number {
+  fallback: () => Promise<number>
+): Promise<number> {
   const k = cacheKey(kind, id, windowStart);
   const entry = budgetCache.get(k);
   if (entry && Date.now() - entry.cachedAt <= TTL_MS) {
     return entry.spent;
   }
   // Cache miss or expired: query DB and populate
-  const spent = fallback();
+  const spent = await fallback();
   budgetCache.set(k, { spent, cachedAt: Date.now() });
   return spent;
 }

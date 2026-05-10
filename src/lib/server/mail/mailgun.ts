@@ -17,17 +17,17 @@ function getMailgunConfig(): MailgunConfig {
 }
 
 export function buildInvitationUrl(token: string, origin?: string): string {
-  const baseUrl = process.env.APP_BASE_URL?.trim() || origin?.trim() || 'http://localhost:5173';
+  const baseUrl = process.env.MAILGUN_BASE_URL?.trim() || origin?.trim();
   return new URL(`/invite/${token}`, baseUrl).toString();
 }
 
 export function buildPasswordResetUrl(token: string, origin?: string): string {
-  const baseUrl = process.env.APP_BASE_URL?.trim() || origin?.trim() || 'http://localhost:5173';
+  const baseUrl = process.env.MAILGUN_BASE_URL?.trim() || origin?.trim();
   return new URL(`/reset-password/${token}`, baseUrl).toString();
 }
 
 export function buildMfaBreakGlassUrl(token: string, origin?: string): string {
-  const baseUrl = process.env.APP_BASE_URL?.trim() || origin?.trim() || 'http://localhost:5173';
+  const baseUrl = process.env.MAILGUN_BASE_URL?.trim() || origin?.trim();
   return new URL(`/mfa/break-glass/${token}`, baseUrl).toString();
 }
 

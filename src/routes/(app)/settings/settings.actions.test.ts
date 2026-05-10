@@ -88,7 +88,7 @@ describe('settings page server behavior', () => {
     ingestCatalogMock.mockClear();
   });
 
-  it('loads settings data for admins', () => {
+  it('loads settings data for admins', async () => {
     const user = {
       id: 'admin-1',
       email: 'admin@example.com',
@@ -98,7 +98,7 @@ describe('settings page server behavior', () => {
       mfaEnabled: false
     };
 
-    const data = load({ locals: { user } } as never);
+    const data = await load({ locals: { user } } as never);
 
     expect(requireAdminMock).toHaveBeenCalledWith(user);
     expect(data).toMatchObject({

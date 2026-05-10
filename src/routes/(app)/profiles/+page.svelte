@@ -11,23 +11,25 @@
     Textarea,
     Badge,
     ConfirmDialog,
-  } from "$lib/components/ui";
-  import { enhance } from "$app/forms";
-  import { fmtCurrency, fmtDateTime } from "$lib/utils";
-  import { Trash2, Pencil, X, Check } from "@lucide/svelte";
+  } from '$lib/components/ui';
+  import { enhance } from '$app/forms';
+  import { toast } from 'svelte-sonner';
+  import { fmtCurrency, fmtDateTime } from '$lib/utils';
+  import { Trash2, Pencil, X, Check } from '@lucide/svelte';
 
-  let { data } = $props();
+  let { data, form } = $props();
+  let lastToastSignature = $state('');
   let editingId: string | null = $state(null);
-  let createFreq = $state("");
-  let editFreq = $state("");
+  let createFreq = $state('');
+  let editFreq = $state('');
 
   function startEditing(p: (typeof data.profiles)[number]) {
     editingId = p.id;
-    editFreq = p.globalBudgetFrequency ?? "";
+    editFreq = p.globalBudgetFrequency ?? '';
   }
   let confirmOpen = $state(false);
   let deleteId: string | null = $state(null);
-  let deleteName = $state("");
+  let deleteName = $state('');
   let deleteFormEl: HTMLFormElement | null = null;
 
   function askDelete(id: string, name: string) {
@@ -41,6 +43,23 @@
     deleteFormEl?.requestSubmit();
     confirmOpen = false;
   }
+
+  $effect(() => {
+    if (!form || typeof form !== 'object') return;
+    const payload = form as Record<string, unknown>;
+    const signature = JSON.stringify(payload);
+    if (signature === lastToastSignature) return;
+    lastToastSignature = signature;
+
+    if (typeof payload.error === 'string' && payload.error) {
+      toast.error(payload.error);
+      return;
+    }
+
+    if (payload.ok) {
+      toast.success('Profile changes saved.');
+    }
+  });
 </script>
 
 <svelte:head><title>Profiles · AiBroker</title></svelte:head>
@@ -60,7 +79,7 @@
   class="hidden"
   bind:this={deleteFormEl}
 >
-  <input type="hidden" name="id" value={deleteId ?? ""} />
+  <input type="hidden" name="id" value={deleteId ?? ''} />
 </form>
 
 <div class="flex flex-col gap-6">
@@ -103,7 +122,7 @@
           <Label for="globalBudgetFrequency">Frequency</Label>
           <Select.Root bind:value={createFreq} name="globalBudgetFrequency">
             <Select.Trigger id="globalBudgetFrequency"
-              >{createFreq || "unlimited"}</Select.Trigger
+              >{createFreq || 'unlimited'}</Select.Trigger
             >
             <Select.Content>
               <Select.Item value="" label="unlimited" />
@@ -161,7 +180,7 @@
                     </div>
                     <div class="flex flex-col gap-1.5 md:col-span-2">
                       <Label>Description</Label>
-                      <Input name="description" value={p.description ?? ""} />
+                      <Input name="description" value={p.description ?? ''} />
                     </div>
                     <div class="flex flex-col gap-1.5">
                       <Label>Budget</Label>
@@ -180,7 +199,7 @@
                         name="globalBudgetFrequency"
                       >
                         <Select.Trigger
-                          >{editFreq || "unlimited"}</Select.Trigger
+                          >{editFreq || 'unlimited'}</Select.Trigger
                         >
                         <Select.Content>
                           <Select.Item value="" label="unlimited" />
@@ -218,12 +237,12 @@
               <tr class="border-b border-border/60">
                 <td class="py-2 pr-4 font-medium">{p.name}</td>
                 <td class="py-2 pr-4 text-muted-foreground"
-                  >{p.description ?? "—"}</td
+                  >{p.description ?? '—'}</td
                 >
                 <td class="py-2 pr-4">
                   {p.globalBudget && p.globalBudget > 0
-                    ? `${fmtCurrency(p.globalBudget)} / ${p.globalBudgetFrequency ?? "—"}`
-                    : "unlimited"}
+                    ? `${fmtCurrency(p.globalBudget)} / ${p.globalBudgetFrequency ?? '—'}`
+                    : 'unlimited'}
                 </td>
                 <td class="py-2 pr-4">
                   {#if p.enabled}

@@ -3,6 +3,9 @@ import { and, eq, gt, isNotNull, isNull, lt, or } from 'drizzle-orm';
 import { nanoid } from 'nanoid';
 import type { Cookies } from '@sveltejs/kit';
 import { db, schema } from '../db/postgres.js';
+import { logger } from '../observability/logger.js';
+
+const sessionLogger = logger.child({ component: 'auth.session' });
 
 export const SESSION_COOKIE = 'ab_session';
 export const REFRESH_TOKEN_COOKIE = 'ab_refresh';
@@ -49,10 +52,11 @@ export function resolveSessionTtlMs(envValue: string | undefined): number {
   const parsed = parseSessionTtlToMs(envValue);
   if (parsed) return parsed;
 
-  console.warn(
-    `[auth/session] Invalid ${SESSION_TTL_ENV_VAR} value "${envValue}". Using default 30 days. ` +
-    'Expected examples: 30m, 12h, 7d, 1y, 45 minutes.'
-  );
+  sessionLogger.warn('auth.session.ttl.invalid', {
+    envVar: SESSION_TTL_ENV_VAR,
+    providedValue: envValue,
+    fallback: '30d'
+  });
   return DEFAULT_SESSION_TTL_MS;
 }
 
@@ -61,10 +65,11 @@ export function resolveRefreshTokenTtlMs(envValue: string | undefined): number {
   const parsed = parseRefreshTokenTtlToMs(envValue);
   if (parsed) return parsed;
 
-  console.warn(
-    `[auth/session] Invalid ${REFRESH_TOKEN_TTL_ENV_VAR} value "${envValue}". Using default 30 days. ` +
-    'Expected examples: 30m, 12h, 7d, 1y, 45 minutes.'
-  );
+  sessionLogger.warn('auth.refresh_token_ttl.invalid', {
+    envVar: REFRESH_TOKEN_TTL_ENV_VAR,
+    providedValue: envValue,
+    fallback: '30d'
+  });
   return DEFAULT_REFRESH_TOKEN_TTL_MS;
 }
 
@@ -376,7 +381,7 @@ const REAP_INTERVAL_MS = 1000 * 60 * 60; // 1 hour
 export function startReapScheduler(): void {
   const timer = setInterval(() => {
     reapExpiredSessions().catch((err) => {
-      console.warn('[auth/session] Failed to reap expired tokens:', err);
+      sessionLogger.warn('auth.session.reap.failed', { err });
     });
   }, REAP_INTERVAL_MS);
   timer.unref();

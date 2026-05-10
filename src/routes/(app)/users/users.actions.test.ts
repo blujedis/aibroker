@@ -18,7 +18,8 @@ vi.mock('drizzle-orm', () => ({
   and: (...args: unknown[]) => ({ kind: 'and', args }),
   eq: (...args: unknown[]) => ({ kind: 'eq', args }),
   inArray: (...args: unknown[]) => ({ kind: 'inArray', args }),
-  or: (...args: unknown[]) => ({ kind: 'or', args })
+  or: (...args: unknown[]) => ({ kind: 'or', args }),
+  sql: (...args: unknown[]) => ({ kind: 'sql', args })
 }));
 
 vi.mock('nanoid', () => ({
@@ -58,27 +59,37 @@ vi.mock('$lib/server/mail/mailgun.js', () => {
   };
 });
 
-vi.mock('$lib/server/db/index.js', () => {
+vi.mock('$lib/server/db/postgres.js', () => {
   const nextSelectedGet = () => {
     if (selectedGets.length > 0) return selectedGets.shift();
     return selectedGet;
   };
 
+  const toRows = () => {
+    const next = nextSelectedGet();
+    if (Array.isArray(next)) return next;
+    return next === undefined ? [] : [next];
+  };
+
+  const whereResult = () => ({
+    limit: vi.fn(async () => toRows()),
+    then: (onFulfilled: (value: unknown[]) => unknown, onRejected?: (reason: unknown) => unknown) =>
+      Promise.resolve(toRows()).then(onFulfilled, onRejected)
+  });
+
   const select = vi.fn(() => ({
     from: vi.fn(() => ({
-      where: vi.fn(() => ({
-        get: vi.fn(() => nextSelectedGet()),
-        all: vi.fn(() => [])
-      })),
-      get: vi.fn(() => nextSelectedGet()),
-      all: vi.fn(() => [])
+      where: vi.fn(() => whereResult()),
+      limit: vi.fn(async () => toRows()),
+      then: (onFulfilled: (value: unknown[]) => unknown, onRejected?: (reason: unknown) => unknown) =>
+        Promise.resolve(toRows()).then(onFulfilled, onRejected)
     }))
   }));
 
   const insert = vi.fn(() => ({
-    values: vi.fn((values: unknown) => {
+    values: vi.fn(async (values: unknown) => {
       lastInsertValues = values;
-      return { run: insertRun };
+      insertRun();
     })
   }));
 
@@ -86,13 +97,17 @@ vi.mock('$lib/server/db/index.js', () => {
     set: vi.fn((values: unknown) => {
       lastUpdateValues = values;
       return {
-        where: vi.fn(() => ({ run: updateRun }))
+        where: vi.fn(async () => {
+          updateRun();
+        })
       };
     })
   }));
 
   const del = vi.fn(() => ({
-    where: vi.fn(() => ({ run: deleteRun }))
+    where: vi.fn(async () => {
+      deleteRun();
+    })
   }));
 
   return {

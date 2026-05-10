@@ -5,6 +5,28 @@ vi.mock('$lib/server/db/postgres.js', () => ({
   schema: {}
 }));
 
+const { warnMock } = vi.hoisted(() => ({
+  warnMock: vi.fn()
+}));
+
+vi.mock('$lib/server/observability/logger.js', () => ({
+  logger: {
+    child: () => ({
+      debug: vi.fn(),
+      info: vi.fn(),
+      warn: warnMock,
+      error: vi.fn(),
+      child: () => ({
+        debug: vi.fn(),
+        info: vi.fn(),
+        warn: warnMock,
+        error: vi.fn(),
+        child: vi.fn()
+      })
+    })
+  }
+}));
+
 import {
   REFRESH_TOKEN_COOKIE,
   SESSION_COOKIE,
@@ -39,7 +61,7 @@ describe('session ttl parsing', () => {
   });
 
   it('falls back to defaults for undefined or invalid env values', () => {
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    warnMock.mockClear();
 
     expect(resolveSessionTtlMs(undefined)).toBe(30 * 24 * 60 * 60 * 1000);
     expect(resolveRefreshTokenTtlMs(undefined)).toBe(30 * 24 * 60 * 60 * 1000);
@@ -47,8 +69,7 @@ describe('session ttl parsing', () => {
     expect(resolveSessionTtlMs('invalid')).toBe(30 * 24 * 60 * 60 * 1000);
     expect(resolveRefreshTokenTtlMs('invalid')).toBe(30 * 24 * 60 * 60 * 1000);
 
-    expect(warnSpy).toHaveBeenCalledTimes(2);
-    warnSpy.mockRestore();
+    expect(warnMock).toHaveBeenCalledTimes(2);
   });
 });
 

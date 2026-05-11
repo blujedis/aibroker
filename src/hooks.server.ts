@@ -37,7 +37,10 @@ function withRequestIdHeader(response: Response, requestId: string): Response {
 	});
 }
 
+let isListening = false;
+
 export const handle: Handle = async ({ event, resolve }) => {
+	const origin = event.url.origin;
 	const startedAt = performance.now();
 	const requestId = resolveRequestId(event);
 	const requestLogger = logger.child({
@@ -47,6 +50,10 @@ export const handle: Handle = async ({ event, resolve }) => {
 		path: event.url.pathname
 	});
 
+	if (!isListening) {
+		requestLogger.info('Server listening on: ' + event.url.origin);
+		isListening = true;
+	}
 	event.locals.requestId = requestId;
 	event.locals.logger = requestLogger;
 	requestLogger.info('request.start');

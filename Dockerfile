@@ -41,7 +41,7 @@ RUN --mount=type=cache,id=pnpm,target=/root/.local/share/pnpm/store \
     pnpm install --frozen-lockfile --prod
 
 # Vite bundles production output to "build" folder.
-COPY --from=builder /app/.drizzle ./.drizzle
+COPY --from=builder /app/drizzle ./drizzle
 COPY --from=builder /app/drizzle.config.ts ./drizzle.config.ts
 
 # Port the project is accessible on

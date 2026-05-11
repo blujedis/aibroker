@@ -10,7 +10,7 @@ WORKDIR /app
 COPY package.json pnpm-lock.yaml ./
 
 # Copy drizzle migrations.
-COPY drizzle ./drizzle
+COPY ./drizzle ./drizzle
 
 # Install all dependencies (including devDependencies needed for the build)
 RUN --mount=type=cache,id=pnpm,target=/root/.local/share/pnpm/store \
@@ -34,7 +34,7 @@ WORKDIR /app
 COPY package.json pnpm-lock.yaml ./
 
 # Copy drizzle migrations.
-COPY drizzle ./drizzle
+COPY ./drizzle ./drizzle
 
 # Install only production dependencies
 RUN --mount=type=cache,id=pnpm,target=/root/.local/share/pnpm/store \

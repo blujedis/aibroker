@@ -40,6 +40,9 @@ COPY drizzle ./drizzle
 RUN --mount=type=cache,id=pnpm,target=/root/.local/share/pnpm/store \
     pnpm install --frozen-lockfile --prod
 
+# Copy compiled app from builder stage
+COPY --from=builder /app/build ./build
+
 # Port the project is accessible on
 EXPOSE 4000
 
@@ -47,4 +50,4 @@ EXPOSE 4000
 USER node
 
 # Port must be set or it will default to 3000
-CMD ["node", "build"]
+CMD ["node", "build/index.js"]

@@ -7,8 +7,7 @@
   "scripts": {
     "dev": "vite dev --host",
     "build": "vite build",
-    "build:docker:image": "docker build -t aibroker:latest .",
-    "build:docker": "npm run build && npm run build:docker:image",
+    "build:docker": "docker build --no-cache -t aibroker:latest .",
     "preview": "vite preview",
     "start": "node build",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
